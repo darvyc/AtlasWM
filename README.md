@@ -2,7 +2,6 @@
 
 **Stable end-to-end JEPA world models via deterministic distribution matching. Based off LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture from Pixels by Lucas Maes, Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero**
 
-[![Tests](https://github.com/darvyc/atlaswm/actions/workflows/tests.yml/badge.svg)](https://github.com/darvyc/atlaswm/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 
