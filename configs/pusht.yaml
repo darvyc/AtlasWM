@@ -1,0 +1,49 @@
+# Push-T-style configuration (close to LeWM paper defaults for that env).
+# Dataset path is left as a placeholder since Push-T data must be supplied
+# separately (see DINO-WM paper for source).
+
+seed: 42
+
+data:
+  name: trajectory_npz
+  path: data/pusht            # expects trajectories.npz with obs, actions
+  img_size: 224
+  batch_size: 128
+  num_workers: 4
+  sub_length: 4
+
+model:
+  img_size: 224
+  patch_size: 14
+  embed_dim: 192
+  action_dim: 2
+  history_length: 3
+  encoder_depth: 12
+  encoder_heads: 3
+  predictor_depth: 6
+  predictor_heads: 16
+  predictor_dropout: 0.1
+
+regularizer:
+  design: cross_polytope
+  rotate: true
+  subspace_dim: 1
+  target: gaussian
+  kernel: two_scale
+  lambda_1: 0.5
+  lambda_2: 2.0
+  alpha: 0.5
+  n_knots: 17
+
+trainer:
+  epochs: 10
+  lr: 3.0e-4
+  weight_decay: 0.01
+  lambda_reg: 0.09
+  grad_clip: 1.0
+  log_every: 100
+  device: auto
+
+output:
+  dir: outputs/pusht
+  save_every: 1

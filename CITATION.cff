@@ -1,0 +1,126 @@
+cff-version: 1.2.0
+message: "If you use AtlasWM in your work, please cite it along with the works it builds upon."
+title: "AtlasWM: Stable JEPA World Models via Deterministic Distribution Matching"
+version: 0.1.0
+date-released: 2026-04-22
+type: software
+authors:
+  - family-names: "C."
+    given-names: "Darvy"
+license: MIT
+repository-code: "https://github.com/darvyc/atlaswm"
+keywords:
+  - jepa
+  - world-model
+  - spherical-design
+  - cramer-wold
+references:
+  - type: article
+    title: "LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture from Pixels"
+    authors:
+      - family-names: "Maes"
+        given-names: "Lucas"
+      - family-names: "Le Lidec"
+        given-names: "Quentin"
+      - family-names: "Scieur"
+        given-names: "Damien"
+      - family-names: "LeCun"
+        given-names: "Yann"
+      - family-names: "Balestriero"
+        given-names: "Randall"
+    year: 2026
+    identifiers:
+      - type: other
+        value: "arXiv:2603.19312"
+  - type: article
+    title: "LeJEPA: Provable and scalable self-supervised learning without the heuristics"
+    authors:
+      - family-names: "Balestriero"
+        given-names: "Randall"
+      - family-names: "LeCun"
+        given-names: "Yann"
+    year: 2025
+    identifiers:
+      - type: other
+        value: "arXiv:2511.08544"
+  - type: article
+    title: "Some theorems on distribution functions"
+    authors:
+      - family-names: "Cramer"
+        given-names: "Harald"
+      - family-names: "Wold"
+        given-names: "Herman"
+    journal: "Journal of the London Mathematical Society"
+    year: 1936
+  - type: article
+    title: "A test for normality based on the empirical characteristic function"
+    authors:
+      - family-names: "Epps"
+        given-names: "Thomas W."
+      - family-names: "Pulley"
+        given-names: "Lawrence B."
+    journal: "Biometrika"
+    volume: 70
+    issue: 3
+    year: 1983
+  - type: article
+    title: "A class of invariant consistent tests for multivariate normality"
+    authors:
+      - family-names: "Henze"
+        given-names: "Norbert"
+      - family-names: "Zirkler"
+        given-names: "Bernd"
+    journal: "Communications in Statistics — Theory and Methods"
+    volume: 19
+    issue: 10
+    year: 1990
+  - type: article
+    title: "Spherical codes and designs"
+    authors:
+      - family-names: "Delsarte"
+        given-names: "Philippe"
+      - family-names: "Goethals"
+        given-names: "Jean-Marie"
+      - family-names: "Seidel"
+        given-names: "Johan J."
+    journal: "Geometriae Dedicata"
+    volume: 6
+    year: 1977
+  - type: article
+    title: "How to generate random matrices from the classical compact groups"
+    authors:
+      - family-names: "Mezzadri"
+        given-names: "Francesco"
+    journal: "Notices of the AMS"
+    volume: 54
+    issue: 5
+    year: 2007
+  - type: conference-paper
+    title: "DINO-WM: World Models on Pre-trained Visual Features Enable Zero-shot Planning"
+    authors:
+      - family-names: "Zhou"
+        given-names: "Gaoyue"
+      - family-names: "Pan"
+        given-names: "Hengkai"
+      - family-names: "LeCun"
+        given-names: "Yann"
+      - family-names: "Pinto"
+        given-names: "Lerrel"
+    conference: "ICML"
+    year: 2025
+  - type: article
+    title: "Stress-testing offline reward-free reinforcement learning: A case for planning with latent dynamics models"
+    authors:
+      - family-names: "Sobal"
+        given-names: "Vlad"
+      - family-names: "Zhang"
+        given-names: "Wancong"
+      - family-names: "Cho"
+        given-names: "Kyunghyun"
+      - family-names: "Balestriero"
+        given-names: "Randall"
+      - family-names: "Rudner"
+        given-names: "Tim G. J."
+      - family-names: "LeCun"
+        given-names: "Yann"
+    year: 2025

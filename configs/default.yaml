@@ -1,0 +1,62 @@
+# Default AtlasWM training configuration.
+#
+# This config reproduces the LeWM-equivalent setup but with AtlasReg's
+# improvements on by default:
+#   - cross-polytope 3-design instead of 1024 Haar projections
+#   - two-scale kernel for joint body + tail sensitivity
+#   - random rotation per step (axis-alignment immunity)
+#
+# Override any field from the CLI, e.g.
+#   python scripts/train.py --config configs/default.yaml \
+#       regularizer.subspace_dim=4 trainer.lambda_reg=0.05
+
+seed: 42
+
+data:
+  name: toy                 # 'toy' (built-in) or 'trajectory_npz'
+  n_trajectories: 200
+  traj_length: 64
+  sub_length: 8
+  img_size: 64
+  batch_size: 32
+  num_workers: 0
+
+model:
+  img_size: 64
+  patch_size: 8
+  embed_dim: 192
+  action_dim: 2
+  history_length: 8
+  encoder_depth: 4
+  encoder_heads: 3
+  predictor_depth: 4
+  predictor_heads: 8
+  predictor_dropout: 0.1
+
+regularizer:
+  design: cross_polytope    # {cross_polytope, simplex, haar}
+  n_haar_projections: 1024  # only used if design=haar
+  rotate: true
+  subspace_dim: 1           # 1 = Epps-Pulley, >1 = Henze-Zirkler
+  target: gaussian          # {gaussian, student_t}
+  student_t_nu: 5.0
+  kernel: two_scale         # {single, two_scale}
+  lambda_: 1.0
+  lambda_1: 0.5
+  lambda_2: 2.0
+  alpha: 0.5
+  n_knots: 17
+  hz_beta: 1.0
+
+trainer:
+  epochs: 10
+  lr: 3.0e-4
+  weight_decay: 0.01
+  lambda_reg: 0.1
+  grad_clip: 1.0
+  log_every: 50
+  device: auto              # {auto, cpu, cuda}
+
+output:
+  dir: outputs/default
+  save_every: 1

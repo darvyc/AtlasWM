@@ -1,0 +1,45 @@
+# Multivariate Henze-Zirkler variant (k=4) for ablation.
+# Only the regularizer block differs from default.yaml.
+
+seed: 42
+
+data:
+  name: toy
+  n_trajectories: 200
+  traj_length: 64
+  sub_length: 8
+  img_size: 64
+  batch_size: 32
+  num_workers: 0
+
+model:
+  img_size: 64
+  patch_size: 8
+  embed_dim: 192
+  action_dim: 2
+  history_length: 8
+  encoder_depth: 4
+  encoder_heads: 3
+  predictor_depth: 4
+  predictor_heads: 8
+  predictor_dropout: 0.1
+
+regularizer:
+  design: cross_polytope   # not used for k-D path but left for consistency
+  rotate: true
+  subspace_dim: 4          # <-- multivariate Henze-Zirkler
+  target: gaussian
+  hz_beta: 1.0
+
+trainer:
+  epochs: 10
+  lr: 3.0e-4
+  weight_decay: 0.01
+  lambda_reg: 1.0           # HZ values are smaller; bump lambda accordingly
+  grad_clip: 1.0
+  log_every: 50
+  device: auto
+
+output:
+  dir: outputs/hz_4d
+  save_every: 1
