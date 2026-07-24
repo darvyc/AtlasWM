@@ -1,48 +1,47 @@
 # AtlasWM
 
-**Stable end-to-end JEPA world models via deterministic distribution matching. Based off LeWorldModel: Stable End-to-End Joint-Embedding Predictive Architecture from Pixels by Lucas Maes, Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero.**
+**End-to-end JEPA world models with structured characteristic-function distribution matching. Based on LeWorldModel by Lucas Maes, Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 
-AtlasWM is a compact Joint-Embedding Predictive Architecture that trains end-to-end from raw pixels without EMAs, stop-gradients, pretrained encoders, or auxiliary losses. The anti-collapse regularizer — *AtlasReg* — replaces the stochastic 1D SIGReg of LeWM with a deterministic, multi-scale, multivariate test that costs less and detects more.
+AtlasWM is a compact Joint-Embedding Predictive Architecture trained from raw pixels without an EMA target encoder, stop-gradient, or pretrained visual backbone. Its regularizer, AtlasReg, matches latent projections to a chosen target through empirical characteristic functions.
 
-> An atlas in differential geometry is a collection of charts that together cover a manifold. AtlasReg covers the distribution of your latents with a deterministic family of charts (projections), each testing distributional match against the target.
+The implementation now distinguishes exact mathematics from finite approximation:
 
----
+- The population sliced characteristic-function objective identifies a distribution.
+- A finite projection and frequency rule is a training approximation, not a proof of equality in distribution.
+- A rotated cross-polytope is exact for spherical polynomials through degree 3 and unbiased over random rotations for general integrands.
+- Antipodal projections are redundant for symmetric targets, so the default computes `d` distinct projection lines rather than evaluating the same loss at `2d` vertices.
+- Finite Gaussian batches have a known positive biased-estimator floor. An unbiased U-statistic option is available.
+- Gaussian-weighted CF matching has an exact BHEP/Henze-Zirkler closed form for validation and multivariate subspaces.
 
-## What's new vs. SIGReg / LeWM
+See [`docs/theory.md`](docs/theory.md) for the complete derivations and guarantee table.
 
-| | SIGReg (LeWM) | AtlasReg (this repo) |
-|---|---|---|
-| Projections | `M = 1024` random Haar | `M = 2d` cross-polytope + random rotation |
-| Moment matching | Stochastic, rate `O(1/√M)` | **Deterministic** for moments ≤ 3 |
-| Subspace dimension | 1 (Epps–Pulley) | Configurable `k ∈ {1, 2, 4, ...}` (Henze–Zirkler) |
-| Kernel weight | Single Gaussian `w(t) = exp(−t²/(2λ²))` | Two-scale Gaussian (body + tail) |
-| Target | Isotropic `N(0, I)` | Gaussian **or** isotropic Student-t |
-| Cost at d=192 | 1024 projections | **384 projections** (~2.7× reduction) |
+## What AtlasReg adds
 
-The theoretical picture: Cramér–Wold (1936) guarantees that a high-dimensional distribution is determined by its 1D projections. Spherical *t*-designs ([Delsarte–Goethals–Seidel, 1977](https://www.sciencedirect.com/science/article/pii/S0723086977800049)) let us replace Monte Carlo sampling over the sphere with a finite set that integrates all polynomials of degree ≤ *t* **exactly**. The cross-polytope (2*d* vertices ±eᵢ) is a 3-design — combined with a per-step random rotation it gives axis-alignment-free deterministic matching of the first three moments.
+| Axis | Options |
+|---|---|
+| Projection rule | Rotated cross-polytope, simplex, or iid Haar directions |
+| Statistical target | Isotropic Gaussian or scaled Student-t in the 1D path |
+| Estimator | Biased non-negative empirical discrepancy or unbiased U-statistic |
+| Frequency integration | Fast quadrature or exact Gaussian closed form |
+| Matching mode | Raw target matching or affine-invariant shape testing |
+| Subspace dimension | 1D projected ECF or k-D BHEP/Henze-Zirkler discrepancy |
 
-See [`docs/theory.md`](docs/theory.md) for the derivations.
-
----
+At latent dimension `d=192`, the symmetric-target cross-polytope path uses `192` distinct antipodal lines. The full `384`-vertex cross-polytope remains the spherical 3-design, but opposite vertices give exactly the same squared CF loss.
 
 ## Install
 
 ```bash
-git clone https://github.com/darvyc/atlaswm.git
-cd atlaswm
+git clone https://github.com/darvyc/AtlasWM.git
+cd AtlasWM
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.10+, PyTorch 2.0+. SciPy is optional (needed only for the Student-t target).
-
----
+Requires Python 3.10+ and PyTorch 2.0+. SciPy is needed for the Student-t target.
 
 ## Quickstart
-
-Train a world model on any (`observations`, `actions`) trajectory dataset:
 
 ```python
 import torch
@@ -55,20 +54,24 @@ model = AtlasWM(
     action_dim=2,
     history_length=3,
     reg_config=AtlasRegConfig(
-        design='cross_polytope',   # deterministic 3-design
-        kernel='two_scale',         # body + tail sensitivity
-        target='gaussian',          # or 'student_t'
-        subspace_dim=1,             # 1 for EP, 4 for multivariate HZ
+        design="cross_polytope",
+        rotate=True,
+        deduplicate_antipodes=True,
+        target="gaussian",
+        standardize_1d=False,
+        estimator="biased",
+        kernel="two_scale",
+        subspace_dim=1,
     ),
 )
 
 # obs:     (B, T, 3, H, W)
 # actions: (B, T, action_dim)
-loss_dict = model.training_step(obs, actions, lambda_reg=0.1)
-loss_dict['total'].backward()
+losses = model.training_step(obs, actions, lambda_reg=0.1)
+losses["total"].backward()
 ```
 
-Plan actions toward a goal at inference time:
+Plan towards a visual goal:
 
 ```python
 from atlaswm.planning import CEMPlanner
@@ -77,83 +80,113 @@ planner = CEMPlanner(model, horizon=5, n_samples=300, n_iters=30)
 actions = planner.plan(current_obs, goal_obs)
 ```
 
-Or run the shipped training script:
+The rollout implementation aligns action `a_t` with latent `z_t` when predicting `z_(t+1)`. Earlier versions shifted candidate actions by one step during planning.
 
-```bash
-python scripts/train.py --config configs/pusht.yaml
+## Regularizer modes
+
+### True Gaussian target matching
+
+Raw projections retain mean, variance, and shape information:
+
+```python
+AtlasRegConfig(
+    target="gaussian",
+    standardize_1d=False,
+    estimator="biased",
+)
 ```
 
----
+This is the default.
+
+### Affine-invariant shape testing
+
+Projection studentization deliberately removes location and scale:
+
+```python
+AtlasRegConfig(
+    target="gaussian",
+    standardize_1d=True,
+    estimator="biased",
+)
+```
+
+This tests standardized marginal shape. It does not enforce latent covariance `I`.
+
+### Unbiased finite-sample diagnostic
+
+```python
+AtlasRegConfig(
+    target="gaussian",
+    standardize_1d=False,
+    estimator="unbiased",
+)
+```
+
+The unbiased estimate has the correct population expectation but can be negative on a finite batch. It is intentionally incompatible with batch-dependent standardization and whitening.
+
+### Exact Gaussian closed form
+
+```python
+AtlasRegConfig(
+    target="gaussian",
+    one_d_backend="closed_form",
+    kernel="single",
+    lambda_=1.0,
+)
+```
+
+This integrates all frequencies analytically but costs `O(MN^2)`, so quadrature remains the practical default.
+
+### Multivariate BHEP / Henze-Zirkler
+
+```python
+AtlasRegConfig(
+    subspace_dim=4,
+    n_subspaces=4,
+    target="gaussian",
+    whiten_kd=False,
+    hz_beta=1.0,
+)
+```
+
+Set `whiten_kd=True` for affine-invariant normal-shape testing. Set `hz_beta=None` to use the classical sample-size-dependent Henze-Zirkler bandwidth.
+
+### Student-t target
+
+```python
+from atlaswm.statistics import student_t_unit_variance_scale
+
+nu = 5.0
+AtlasRegConfig(
+    target="student_t",
+    student_t_nu=nu,
+    student_t_scale=student_t_unit_variance_scale(nu),
+)
+```
+
+A scale-one Student-t has variance `nu/(nu-2)` when `nu>2`. Heavy tails do not by themselves imply low intrinsic dimension.
 
 ## Repository layout
 
-```
+```text
 atlaswm/
 ├── atlaswm/
-│   ├── designs.py       # Spherical t-designs (cross-polytope, simplex, Haar)
-│   ├── targets.py       # Gaussian and Student-t target distributions
-│   ├── kernels.py       # Single- and two-scale Gaussian quadrature kernels
-│   ├── regularizer.py   # AtlasReg — the anti-collapse regularizer
-│   ├── encoder.py       # ViT-Tiny encoder
-│   ├── predictor.py     # Causal transformer predictor with AdaLN action conditioning
-│   ├── model.py         # AtlasWM end-to-end model
-│   ├── planning/        # CEM-based latent-space planner
-│   └── data.py          # Trajectory dataset and synthetic toy environment
-├── tests/               # pytest suite — run with `pytest -v`
-├── configs/             # YAML configs per environment
-├── docs/theory.md       # Math derivations (Cramér-Wold, t-designs, HZ)
-├── examples/            # Minimal runnable examples
-└── scripts/             # Training, evaluation, benchmarking CLIs
+│   ├── designs.py       # Spherical designs and Haar rotations
+│   ├── statistics.py    # BHEP, HZ bandwidth, null floor, moment formulae
+│   ├── targets.py       # Gaussian and numerically stable Student-t CFs
+│   ├── kernels.py       # Gaussian frequency quadrature
+│   ├── regularizer.py   # AtlasReg
+│   ├── encoder.py       # ViT encoder
+│   ├── predictor.py     # Causal action-conditioned predictor
+│   ├── model.py         # End-to-end objective
+│   ├── planning/        # CEM latent planner
+│   └── data.py          # Synthetic trajectory scaffold
+├── tests/
+├── configs/
+├── docs/theory.md
+├── examples/
+└── scripts/
 ```
-
----
-
-## Four axes of generalization
-
-The regularizer exposes four orthogonal knobs. Each can be ablated independently.
-
-### 1. Projection scheme
-
-```python
-AtlasRegConfig(design='cross_polytope', rotate=True)   # default — 2d vertices, deterministic
-AtlasRegConfig(design='simplex', rotate=True)          # d+1 vertices (2-design)
-AtlasRegConfig(design='haar', n_haar_projections=1024) # baseline — Monte Carlo
-```
-
-The cross-polytope is a **spherical 3-design**: the sign symmetry kills all odd moments automatically, and the {±eᵢ} set integrates quadratic forms exactly. Random rotation per step prevents the encoder from exploiting coordinate-aligned structure.
-
-### 2. Kernel weight
-
-Body-vs-tail sensitivity is controlled by the weight `w(t)` in the Epps–Pulley integral. Small λ concentrates near `t=0` → low-moment sensitivity (body). Large λ probes the tails.
-
-```python
-AtlasRegConfig(kernel='single',    lambda_=1.0)                           # standard
-AtlasRegConfig(kernel='two_scale', lambda_1=0.5, lambda_2=2.0, alpha=0.5) # simultaneous body+tail
-```
-
-Two-scale costs one extra kernel evaluation at quadrature nodes — zero runtime difference.
-
-### 3. Target distribution
-
-Cramér–Wold is target-agnostic. For environments with low intrinsic dimensionality (where isotropic Gaussian in high-d is a bad prior), Student-t with moderate ν performs better:
-
-```python
-AtlasRegConfig(target='gaussian')
-AtlasRegConfig(target='student_t', student_t_nu=5.0)  # heavier tails, tighter body
-```
-
-### 4. Subspace dimension
-
-1D projections are blind to joint structure. The Henze–Zirkler test is the natural multivariate lift, with a closed-form expression (so no quadrature needed):
-
-```python
-AtlasRegConfig(subspace_dim=1)  # Epps-Pulley (1D, scalar projections)
-AtlasRegConfig(subspace_dim=4)  # Henze-Zirkler (4D subspace, joint test)
-```
-
-Per-test cost at batch size N is O(N²) for HZ regardless of k, so higher k gives strictly richer signal per FLOP.
-
----
 
 ## Testing
 
@@ -161,31 +194,32 @@ Per-test cost at batch size N is O(N²) for HZ regardless of k, so higher k give
 pytest -v tests/
 ```
 
-The suite verifies that:
-- The cross-polytope has unit-norm rows and the correct count
-- Random rotations are orthogonal with probability 1
-- The Epps–Pulley statistic is zero (up to `1e-6`) on standard Gaussian samples
-- The Henze–Zirkler statistic agrees with its closed form
-- `AtlasReg` gradients flow end-to-end
+The mathematical tests cover:
 
----
+- exact cross-polytope second and third moments;
+- the explicit fourth-moment limitation of a 3-design;
+- equality of full and antipodally deduplicated symmetric-target losses;
+- agreement between dense numerical integration and the Gaussian BHEP closed form;
+- the analytic finite-sample Gaussian null floor;
+- biased versus unbiased estimators;
+- stable Student-t CF evaluation at large degrees of freedom;
+- current-action alignment in autoregressive rollout;
+- end-to-end gradient flow.
 
-## Citing
+## Scope and validation status
 
-If you use AtlasWM, please cite both this repository and the works it builds on:
+AtlasWM is a research scaffold, not yet a reproduced benchmark result. The repository includes a synthetic image trajectory environment and unit tests, but not full PushT, OGBench, DMControl, or LeWorldModel reproduction runs. Claims of improved control performance require fixed-budget experiments with seeds, confidence intervals, and published checkpoints.
+
+## Citation
 
 ```bibtex
 @software{atlaswm2026,
-  title  = {AtlasWM: Stable JEPA World Models via Deterministic Distribution Matching},
+  title  = {AtlasWM: JEPA World Models with Structured Distribution Matching},
   author = {{Darvy C.}},
   year   = {2026},
-  url    = {https://github.com/darvyc/atlaswm},
+  url    = {https://github.com/darvyc/AtlasWM},
 }
 ```
-
-See [`CITATION.cff`](CITATION.cff) for references to LeWM, SIGReg, DINO-WM, PLDM, and the Cramér-Wold / Epps-Pulley / Henze-Zirkler lineage.
-
----
 
 ## License
 
