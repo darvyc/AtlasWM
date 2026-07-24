@@ -1,12 +1,12 @@
-# Push-T-style configuration (close to LeWM paper defaults for that env).
-# Dataset path is left as a placeholder since Push-T data must be supplied
-# separately (see DINO-WM paper for source).
+# Push-T-scale model configuration. The repository does not bundle the Push-T
+# dataset adapter or benchmark data; this file records model hyperparameters
+# for a future integration rather than constituting a reproduced result.
 
 seed: 42
 
 data:
   name: trajectory_npz
-  path: data/pusht            # expects trajectories.npz with obs, actions
+  path: data/pusht
   img_size: 224
   batch_size: 128
   num_workers: 4
@@ -27,8 +27,12 @@ model:
 regularizer:
   design: cross_polytope
   rotate: true
+  deduplicate_antipodes: true
   subspace_dim: 1
   target: gaussian
+  standardize_1d: false
+  estimator: biased
+  one_d_backend: quadrature
   kernel: two_scale
   lambda_1: 0.5
   lambda_2: 2.0
