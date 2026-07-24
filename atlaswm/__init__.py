@@ -2,6 +2,7 @@
 
 __version__ = "1.0.0"
 
+from atlaswm.data import ToyEnvConfig, ToyTrajectoryDataset, TrajectoryNPZDataset
 from atlaswm.encoder import ViTEncoder
 from atlaswm.model import AtlasWM
 from atlaswm.planning import CEMPlanner
@@ -23,6 +24,9 @@ __all__ = [
     "ViTEncoder",
     "Predictor",
     "CEMPlanner",
+    "ToyEnvConfig",
+    "ToyTrajectoryDataset",
+    "TrajectoryNPZDataset",
     "empirical_cf_discrepancy",
     "gaussian_bhep_discrepancy",
     "gaussian_bhep_null_floor",
