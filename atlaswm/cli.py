@@ -1,282 +1,242 @@
-"""Training command-line interface for AtlasWM.
-
-Usage:
-    atlaswm-train --config configs/default.yaml
-    atlaswm-train --config configs/default.yaml regularizer.subspace_dim=4
-"""
+"""Command-line entry points for training and evaluation."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import importlib.metadata
 import json
-import random
-import subprocess
+import math
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, random_split
 
-from atlaswm.data import ToyTrajectoryDataset, TrajectoryNPZDataset
-from atlaswm.model import AtlasWM
-from atlaswm.regularizer import AtlasRegConfig
-from atlaswm.train import TrainState, train_one_epoch
-
-
-def _parse_overrides(pairs: list[str]) -> dict:
-    out: dict = {}
-    for pair in pairs:
-        if "=" not in pair:
-            raise ValueError(f"Invalid override {pair!r} (expected KEY=VALUE)")
-        key, value = pair.split("=", 1)
-        parsed = yaml.safe_load(value)
-        cursor = out
-        parts = key.split(".")
-        for part in parts[:-1]:
-            cursor = cursor.setdefault(part, {})
-        cursor[parts[-1]] = parsed
-    return out
-
-
-def _deep_update(base: dict, override: dict) -> dict:
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_update(base[key], value)
-        else:
-            base[key] = value
-    return base
+from atlaswm.config import (
+    build_dataset,
+    build_model,
+    deep_update,
+    load_config,
+    parse_overrides,
+    validate_config,
+)
+from atlaswm.data import split_by_trajectory
+from atlaswm.evaluation import (
+    evaluate_loader,
+    evaluate_state_probe_loader,
+    evaluate_toy_control,
+)
+from atlaswm.planning import CEMPlanner
+from atlaswm.training import (
+    Trainer,
+    TrainerConfig,
+    dataset_fingerprint,
+    load_checkpoint,
+    seed_worker,
+    set_global_seed,
+    system_information,
+)
 
 
 def resolve_device(name: str) -> torch.device:
-    """Resolve ``auto`` or an explicit PyTorch device string."""
     if name == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(name)
 
 
-def build_dataset(cfg: dict) -> Dataset:
-    """Construct the dataset declared by a resolved configuration."""
-    data = cfg["data"]
-    name = data["name"]
-    if name == "toy":
-        return ToyTrajectoryDataset(
-            n_trajectories=data["n_trajectories"],
-            traj_length=data["traj_length"],
-            sub_length=data["sub_length"],
-            seed=cfg["seed"],
+def _split_dataset(dataset, data_config: dict, seed: int):
+    split = data_config.get("split", {"train": 0.8, "validation": 0.1})
+    if hasattr(dataset, "n_trajectories") and hasattr(dataset, "windows_per_trajectory"):
+        return split_by_trajectory(
+            dataset,
+            train_fraction=float(split["train"]),
+            validation_fraction=float(split["validation"]),
+            seed=seed,
         )
-    if name == "trajectory_npz":
-        return TrajectoryNPZDataset(
-            path=data["path"],
-            sub_length=data["sub_length"],
-            obs_key=data.get("obs_key", "obs"),
-            action_key=data.get("action_key", "actions"),
-            state_key=data.get("state_key"),
-            normalize_images=data.get("normalize_images", True),
-            channel_last=data.get("channel_last", False),
-        )
-    raise ValueError(
-        f"Unknown dataset {name!r}; expected 'toy' or 'trajectory_npz'"
+    total = len(dataset)
+    train_size = int(total * split["train"])
+    validation_size = int(total * split["validation"])
+    test_size = total - train_size - validation_size
+    generator = torch.Generator().manual_seed(seed)
+    return random_split(
+        dataset,
+        [train_size, validation_size, test_size],
+        generator=generator,
     )
 
 
-def build_model(cfg: dict) -> AtlasWM:
-    """Construct AtlasWM from a resolved configuration dictionary."""
-    model_cfg = cfg["model"]
-    regularizer_cfg = cfg["regularizer"]
-    reg_cfg = AtlasRegConfig(
-        design=regularizer_cfg.get("design", "cross_polytope"),
-        n_haar_projections=regularizer_cfg.get("n_haar_projections", 1024),
-        rotate=regularizer_cfg.get("rotate", True),
-        deduplicate_antipodes=regularizer_cfg.get("deduplicate_antipodes", True),
-        subspace_dim=regularizer_cfg.get("subspace_dim", 1),
-        n_subspaces=regularizer_cfg.get("n_subspaces", 1),
-        target=regularizer_cfg.get("target", "gaussian"),
-        student_t_nu=regularizer_cfg.get("student_t_nu", 5.0),
-        student_t_scale=regularizer_cfg.get("student_t_scale", 1.0),
-        standardize_1d=regularizer_cfg.get("standardize_1d", False),
-        whiten_kd=regularizer_cfg.get("whiten_kd", False),
-        estimator=regularizer_cfg.get("estimator", "biased"),
-        one_d_backend=regularizer_cfg.get("one_d_backend", "quadrature"),
-        kernel=regularizer_cfg.get("kernel", "two_scale"),
-        lambda_=regularizer_cfg.get("lambda_", 1.0),
-        lambda_1=regularizer_cfg.get("lambda_1", 0.5),
-        lambda_2=regularizer_cfg.get("lambda_2", 2.0),
-        alpha=regularizer_cfg.get("alpha", 0.5),
-        n_knots=regularizer_cfg.get("n_knots", 17),
-        hz_beta=regularizer_cfg.get("hz_beta", 1.0),
-        eps=regularizer_cfg.get("eps", 1e-6),
-    )
-    return AtlasWM(
-        img_size=model_cfg["img_size"],
-        patch_size=model_cfg["patch_size"],
-        embed_dim=model_cfg["embed_dim"],
-        action_dim=model_cfg["action_dim"],
-        history_length=model_cfg["history_length"],
-        encoder_depth=model_cfg["encoder_depth"],
-        encoder_heads=model_cfg["encoder_heads"],
-        predictor_depth=model_cfg["predictor_depth"],
-        predictor_heads=model_cfg["predictor_heads"],
-        predictor_dropout=model_cfg.get("predictor_dropout", 0.1),
-        reg_config=reg_cfg,
+def _loader(dataset, trainer_config: dict, device: torch.device, seed: int, shuffle: bool):
+    generator = torch.Generator().manual_seed(seed)
+    return DataLoader(
+        dataset,
+        batch_size=int(trainer_config["batch_size"]),
+        shuffle=shuffle,
+        num_workers=int(trainer_config.get("num_workers", 0)),
+        pin_memory=device.type == "cuda",
+        persistent_workers=int(trainer_config.get("num_workers", 0)) > 0,
+        worker_init_fn=seed_worker,
+        generator=generator,
     )
 
 
-def _package_version() -> str:
-    try:
-        return importlib.metadata.version("atlaswm")
-    except importlib.metadata.PackageNotFoundError:
-        return "1.0.0"
+def _scheduler(optimizer, total_steps: int, warmup_steps: int):
+    def multiplier(step: int) -> float:
+        if warmup_steps and step < warmup_steps:
+            return max(step, 1) / warmup_steps
+        progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * min(max(progress, 0.0), 1.0)))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, multiplier)
 
 
-def _git_commit() -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError):
-        return None
-    return result.stdout.strip() or None
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _dataset_fingerprint(dataset: Dataset, cfg: dict) -> dict[str, Any]:
-    if isinstance(dataset, TrajectoryNPZDataset):
-        return {
-            "kind": "trajectory_npz",
-            "path": str(dataset.archive_path),
-            "sha256": _sha256_file(dataset.archive_path),
-            "trajectories": int(dataset.obs.shape[0]),
-            "trajectory_length": int(dataset.obs.shape[1]),
-        }
-
-    serialized = json.dumps(
-        {"seed": cfg["seed"], "data": cfg["data"]},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return {
-        "kind": "toy",
-        "sha256": hashlib.sha256(serialized).hexdigest(),
-        "trajectories": int(dataset.obs.shape[0]),
-        "trajectory_length": int(dataset.obs.shape[1]),
-    }
-
-
-def _rng_state() -> dict[str, Any]:
-    return {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch_cpu": torch.get_rng_state(),
-        "torch_cuda": torch.cuda.get_rng_state_all()
-        if torch.cuda.is_available()
-        else None,
-    }
-
-
-def _save_checkpoint(
-    path: Path,
-    *,
-    model: AtlasWM,
-    optimizer: torch.optim.Optimizer,
-    cfg: dict,
-    state: TrainState,
-    dataset_fingerprint: dict[str, Any],
-) -> None:
-    payload = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "config": cfg,
-        "state": {"step": state.step, "epoch": state.epoch},
-        "loss_history": state.loss_history,
-        "rng_state": _rng_state(),
-        "atlaswm_version": _package_version(),
-        "git_commit": _git_commit(),
-        "dataset_fingerprint": dataset_fingerprint,
-    }
-    temporary_path = path.with_suffix(path.suffix + ".tmp")
-    torch.save(payload, temporary_path)
-    temporary_path.replace(path)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Train AtlasWM.")
-    parser.add_argument("--config", required=True, help="Path to YAML config.")
-    parser.add_argument("overrides", nargs="*", help="KEY=VALUE overrides.")
+def train_main() -> None:
+    parser = argparse.ArgumentParser(description="Train AtlasWM")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--resume")
+    parser.add_argument("overrides", nargs="*")
     args = parser.parse_args()
 
-    with open(args.config, encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
+    config = load_config(args.config)
     if args.overrides:
-        _deep_update(cfg, _parse_overrides(args.overrides))
+        config = deep_update(config, parse_overrides(args.overrides))
+    validate_config(config)
 
-    seed = int(cfg["seed"])
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    seed = int(config["seed"])
+    trainer_values = config["trainer"]
+    set_global_seed(seed, deterministic=bool(trainer_values.get("deterministic", False)))
+    device = resolve_device(trainer_values.get("device", "auto"))
 
-    device = resolve_device(cfg["trainer"].get("device", "auto"))
-    print(f"Device: {device}")
-
-    dataset = build_dataset(cfg)
-    data_generator = torch.Generator().manual_seed(seed)
-    loader = DataLoader(
+    dataset = build_dataset(config)
+    train_dataset, validation_dataset, test_dataset = _split_dataset(
         dataset,
-        batch_size=cfg["data"]["batch_size"],
-        shuffle=True,
-        num_workers=cfg["data"].get("num_workers", 0),
-        pin_memory=device.type == "cuda",
-        generator=data_generator,
+        config["data"],
+        seed,
     )
-    model = build_model(cfg).to(device)
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    train_loader = _loader(train_dataset, trainer_values, device, seed, True)
+    validation_loader = _loader(validation_dataset, trainer_values, device, seed + 1, False)
+    test_loader = _loader(test_dataset, trainer_values, device, seed + 2, False)
 
+    model = build_model(config).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=cfg["trainer"]["lr"],
-        weight_decay=cfg["trainer"].get("weight_decay", 0.0),
+        lr=float(trainer_values["lr"]),
+        weight_decay=float(trainer_values.get("weight_decay", 0.0)),
     )
-    output_dir = Path(cfg["output"]["dir"])
+    total_steps = len(train_loader) * int(trainer_values["epochs"])
+    scheduler = _scheduler(
+        optimizer,
+        total_steps,
+        int(trainer_values.get("warmup_steps", 0)),
+    )
+    output_dir = Path(config["output"]["dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    fingerprint = _dataset_fingerprint(dataset, cfg)
+    with (output_dir / "resolved_config.yaml").open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+    with (output_dir / "system.json").open("w", encoding="utf-8") as handle:
+        json.dump(system_information(), handle, indent=2, sort_keys=True)
 
-    state = TrainState()
-    for epoch in range(cfg["trainer"]["epochs"]):
-        print(f"=== Epoch {epoch + 1} / {cfg['trainer']['epochs']} ===")
-        train_one_epoch(
-            model,
-            loader,
-            optimizer,
-            lambda_reg=cfg["trainer"]["lambda_reg"],
-            device=device,
-            state=state,
-            grad_clip=cfg["trainer"].get("grad_clip", 1.0),
-            log_every=cfg["trainer"].get("log_every", 50),
+    fingerprint = dataset_fingerprint(dataset)
+    trainer_config = TrainerConfig(
+        epochs=int(trainer_values["epochs"]),
+        lambda_reg=float(trainer_values["lambda_reg"]),
+        grad_clip=trainer_values.get("grad_clip", 1.0),
+        amp=bool(trainer_values.get("amp", True)),
+        log_every=int(trainer_values.get("log_every", 50)),
+        validate_every=int(trainer_values.get("validate_every", 1)),
+        checkpoint_every=int(trainer_values.get("checkpoint_every", 1)),
+        deterministic=bool(trainer_values.get("deterministic", False)),
+    )
+    trainer = Trainer(
+        model,
+        optimizer,
+        device=device,
+        config=trainer_config,
+        output_dir=output_dir,
+        resolved_config=config,
+        fingerprint=fingerprint,
+        scheduler=scheduler,
+    )
+    state = None
+    if args.resume:
+        state = load_checkpoint(
+            args.resume,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
         )
-        if (epoch + 1) % cfg["output"].get("save_every", 1) == 0:
-            checkpoint = output_dir / f"ckpt_epoch{epoch + 1}.pt"
-            _save_checkpoint(
-                checkpoint,
-                model=model,
-                optimizer=optimizer,
-                cfg=cfg,
-                state=state,
-                dataset_fingerprint=fingerprint,
+    final_state = trainer.fit(
+        train_loader,
+        validation_loader=validation_loader,
+        state=state,
+    )
+    evaluation = evaluate_loader(
+        model,
+        test_loader,
+        device,
+        max_horizon=min(config["data"]["sub_length"] - 1, 10),
+    )
+    evaluation.update(
+        {
+            "epoch": final_state.epoch,
+            "step": final_state.step,
+            "parameters": model.parameter_count(),
+        }
+    )
+    try:
+        evaluation.update(
+            evaluate_state_probe_loader(
+                model,
+                test_loader,
+                device,
+                max_batches=config.get("evaluation", {}).get("probe_max_batches"),
             )
-            print(f"Saved: {checkpoint}")
+        )
+    except ValueError:
+        pass
+    control = config.get("evaluation", {}).get("toy_control", {})
+    if config["data"]["name"] == "toy" and control.get("enabled", False):
+        planner = CEMPlanner(
+            model,
+            horizon=int(control.get("horizon", 5)),
+            n_samples=int(control.get("n_samples", 256)),
+            n_iters=int(control.get("n_iters", 6)),
+            n_elites=int(control.get("n_elites", 32)),
+            action_low=float(control.get("action_low", -2.0)),
+            action_high=float(control.get("action_high", 2.0)),
+            smoothness_penalty=float(control.get("smoothness_penalty", 0.0)),
+        )
+        evaluation.update(
+            evaluate_toy_control(
+                model,
+                planner,
+                episodes=int(control.get("episodes", 20)),
+                max_steps=int(control.get("max_steps", 40)),
+                seed=seed + 1000,
+            )
+        )
+    with (output_dir / "evaluation.json").open("w", encoding="utf-8") as handle:
+        json.dump(evaluation, handle, indent=2, sort_keys=True)
+    print(json.dumps(evaluation, indent=2, sort_keys=True))
+
+
+def evaluate_main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate an AtlasWM checkpoint")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--max-batches", type=int)
+    args = parser.parse_args()
+    config = load_config(args.config)
+    validate_config(config)
+    device = resolve_device(config["trainer"].get("device", "auto"))
+    dataset = build_dataset(config)
+    _, _, test_dataset = _split_dataset(dataset, config["data"], int(config["seed"]))
+    loader = _loader(test_dataset, config["trainer"], device, int(config["seed"]) + 2, False)
+    model = build_model(config).to(device)
+    load_checkpoint(args.checkpoint, model=model, restore_rng=False)
+    metrics = evaluate_loader(
+        model,
+        loader,
+        device,
+        max_batches=args.max_batches,
+        max_horizon=min(config["data"]["sub_length"] - 1, 10),
+    )
+    print(json.dumps(metrics, indent=2, sort_keys=True))

@@ -1,34 +1,29 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlaswm"
-version = "1.0.0"
+version = "2.0.0"
 description = "Structured characteristic-function regularization for end-to-end JEPA world models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
-authors = [
-  { name = "Darvy Cana" },
-]
+authors = [{ name = "Darvy Cana" }]
 keywords = [
   "jepa",
   "world-model",
-  "self-supervised-learning",
   "representation-learning",
   "latent-dynamics",
   "characteristic-functions",
   "spherical-designs",
   "cramer-wold",
   "bhep",
-  "henze-zirkler",
 ]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -37,40 +32,36 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
-  "torch>=2.0",
-  "numpy>=1.24",
-  "tqdm>=4.65",
+  "torch>=2.2",
+  "numpy>=1.26",
   "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-student-t = ["scipy>=1.10"]
+student-t = ["scipy>=1.11"]
 dev = [
   "build>=1.2",
-  "pytest>=7.4",
-  "pytest-cov>=4.1",
-  "ruff>=0.3",
-  "scipy>=1.10",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+  "scipy>=1.11",
 ]
+
+[project.scripts]
+atlaswm-train = "atlaswm.cli:train_main"
+atlaswm-evaluate = "atlaswm.cli:evaluate_main"
 
 [project.urls]
 Homepage = "https://github.com/darvyc/AtlasWM"
-Documentation = "https://github.com/darvyc/AtlasWM#readme"
 Repository = "https://github.com/darvyc/AtlasWM"
 Issues = "https://github.com/darvyc/AtlasWM/issues"
-Changelog = "https://github.com/darvyc/AtlasWM/blob/main/CHANGELOG.md"
-Manuscript = "https://github.com/darvyc/AtlasWM/blob/main/paper/atlaswm.md"
-
-[project.scripts]
-atlaswm-train = "atlaswm.cli:main"
 
 [tool.setuptools]
 packages = ["atlaswm", "atlaswm.planning"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-v --tb=short --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers"
 
 [tool.coverage.run]
 branch = true
@@ -78,10 +69,11 @@ source = ["atlaswm"]
 
 [tool.coverage.report]
 show_missing = true
-skip_covered = true
+fail_under = 75
 exclude_also = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
+  "if __name__ == .__main__.:",
 ]
 
 [tool.ruff]
@@ -89,5 +81,5 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["E501"]

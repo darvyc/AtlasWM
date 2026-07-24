@@ -1,0 +1,25 @@
+{
+  "device": "cpu",
+  "records": [
+    {
+      "name": "iid_haar_1024",
+      "milliseconds_per_iteration": 19.892815999961993,
+      "loss": 0.01774001494050026
+    },
+    {
+      "name": "atlas_haar_frame",
+      "milliseconds_per_iteration": 0.9322873333985626,
+      "loss": 0.029580118134617805
+    },
+    {
+      "name": "atlas_fast_frame",
+      "milliseconds_per_iteration": 0.9130953333927513,
+      "loss": 0.02986275404691696
+    },
+    {
+      "name": "atlas_4d_bhep",
+      "milliseconds_per_iteration": 1.5370426667686843,
+      "loss": 0.018745213747024536
+    }
+  ]
+}

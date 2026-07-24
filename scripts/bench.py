@@ -1,129 +1,77 @@
-"""Benchmark the principal AtlasReg estimator configurations.
-
-This script measures forward plus backward time. It does not measure control
-quality or establish a statistical-power advantage.
-"""
+"""Matched forward/backward estimator benchmark with synchronization."""
 
 from __future__ import annotations
 
 import argparse
-import sys
+import json
 import time
-from pathlib import Path
 
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from atlaswm.regularizer import AtlasReg, AtlasRegConfig
 
 
-def benchmark(
-    name: str,
-    cfg: AtlasRegConfig,
-    dim: int,
-    batch_size: int,
-    n_iters: int,
-    device: torch.device,
-) -> None:
-    reg = AtlasReg(dim, cfg).to(device)
-    z = torch.randn(batch_size, dim, device=device, requires_grad=True)
-
+def measure(name: str, regularizer: AtlasReg, latent: torch.Tensor, iterations: int) -> dict:
     for _ in range(5):
-        reg(z).backward()
-        z.grad = None
-
-    if device.type == "cuda":
+        regularizer(latent).backward()
+        latent.grad = None
+    if latent.device.type == "cuda":
         torch.cuda.synchronize()
-    start = time.perf_counter()
-    for _ in range(n_iters):
-        loss = reg(z)
+    started = time.perf_counter()
+    for _ in range(iterations):
+        loss = regularizer(latent)
         loss.backward()
-        z.grad = None
-    if device.type == "cuda":
+        latent.grad = None
+    if latent.device.type == "cuda":
         torch.cuda.synchronize()
-    elapsed = time.perf_counter() - start
-
-    milliseconds = elapsed / n_iters * 1000.0
-    print(f"{name:<42s} {milliseconds:8.2f} ms/iter  loss={loss.item():.6f}")
+    elapsed = time.perf_counter() - started
+    return {
+        "name": name,
+        "milliseconds_per_iteration": elapsed * 1000.0 / iterations,
+        "loss": float(loss.detach()),
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dim", type=int, default=192)
     parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--n-iters", type=int, default=100)
+    parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
-
-    device = (
-        torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if args.device == "auto"
-        else torch.device(args.device)
+    device = torch.device(
+        "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
+        if args.device != "auto"
+        else "cpu"
     )
-    print(
-        f"Benchmark: dim={args.dim}, batch={args.batch_size}, "
-        f"iters={args.n_iters}, device={device}"
-    )
-    print("-" * 90)
-
-    benchmark(
-        "Haar 1D quadrature, 1024 directions",
-        AtlasRegConfig(
+    latent = torch.randn(args.batch_size, args.dim, device=device, requires_grad=True)
+    configurations = {
+        "iid_haar_1024": AtlasRegConfig(
             design="haar",
             n_haar_projections=1024,
-            rotate=False,
-            subspace_dim=1,
-            standardize_1d=False,
+            rotation_mode="none",
             kernel="single",
-            lambda_=1.0,
         ),
-        args.dim,
-        args.batch_size,
-        args.n_iters,
-        device,
-    )
-    benchmark(
-        "Rotated basis 1D two-scale quadrature",
-        AtlasRegConfig(
+        "atlas_haar_frame": AtlasRegConfig(
             design="cross_polytope",
-            rotate=True,
-            deduplicate_antipodes=True,
-            subspace_dim=1,
-            standardize_1d=False,
-            kernel="two_scale",
+            rotation_mode="haar",
+            rotation_refresh_steps=16,
         ),
-        args.dim,
-        args.batch_size,
-        args.n_iters,
-        device,
-    )
-    benchmark(
-        "Random 4D subspace, raw fixed-beta BHEP",
-        AtlasRegConfig(
+        "atlas_fast_frame": AtlasRegConfig(
+            design="cross_polytope",
+            rotation_mode="signed_permutation",
+        ),
+        "atlas_4d_bhep": AtlasRegConfig(
             subspace_dim=4,
-            n_subspaces=1,
-            whiten_kd=False,
+            n_subspaces=4,
             hz_beta=1.0,
         ),
-        args.dim,
-        args.batch_size,
-        args.n_iters,
-        device,
-    )
-    benchmark(
-        "Random 4D subspace, HZ-style shape test",
-        AtlasRegConfig(
-            subspace_dim=4,
-            n_subspaces=1,
-            whiten_kd=True,
-            hz_beta=None,
-        ),
-        args.dim,
-        args.batch_size,
-        args.n_iters,
-        device,
-    )
+    }
+    records = [
+        measure(name, AtlasReg(args.dim, config).to(device), latent, args.iterations)
+        for name, config in configurations.items()
+    ]
+    print(json.dumps({"device": str(device), "records": records}, indent=2))
 
 
 if __name__ == "__main__":

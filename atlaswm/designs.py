@@ -1,186 +1,208 @@
-"""Spherical t-designs for deterministic distribution matching.
-
-A spherical t-design is a finite set of points {u_i} on the unit sphere
-S^(d-1) whose empirical average equals the uniform (Haar) average over
-S^(d-1) for all polynomials of degree <= t:
-
-    (1/M) sum_i p(u_i)  =  int_{S^(d-1)} p(u) dsigma(u)   for all polys p with deg(p) <= t
-
-For our use case (Epps-Pulley / Henze-Zirkler regularizers), a t-design
-gives *exact* matching of moments up to order t of the 1D projections'
-distribution, rather than the O(1/sqrt(M)) Monte Carlo rate.
-
-This module provides three designs:
-  - cross_polytope: 2d points, is a spherical 3-design
-  - simplex:         d+1 points, is a spherical 2-design
-  - random_haar:     arbitrary M points, is a stochastic estimator
-
-Reference:
-  Delsarte, Goethals, Seidel. "Spherical codes and designs." Geom. Dedicata 6, 1977.
-"""
+"""Projection designs and orthogonal randomization utilities."""
 
 from __future__ import annotations
-from typing import Optional
+
+from typing import Literal
 
 import torch
 from torch import Tensor
 
+RotationMode = Literal["haar", "signed_permutation", "none"]
+
+
+def _validate_dim(dim: int) -> None:
+    if dim < 1:
+        raise ValueError("dim must be positive")
+
 
 def cross_polytope(
     dim: int,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> Tensor:
-    """Cross-polytope vertices in R^d: the 2d points {+-e_i}.
-
-    This set is a spherical 3-design. The sign-flip symmetry automatically
-    annihilates all odd moments, and the {+-e_i} set integrates every
-    quadratic form against Haar exactly up to the overall factor 1/d.
-
-    Args:
-        dim: Ambient dimension d.
-        device: Optional torch device.
-        dtype: Optional torch dtype.
-
-    Returns:
-        Tensor of shape (2*dim, dim). Each row is a unit vector.
-    """
-    I = torch.eye(dim, device=device, dtype=dtype)
-    return torch.cat([I, -I], dim=0)
+    """Return the ``2d`` vertices ``{+e_i, -e_i}`` of the cross-polytope."""
+    _validate_dim(dim)
+    eye = torch.eye(dim, device=device, dtype=dtype)
+    return torch.cat((eye, -eye), dim=0)
 
 
 def simplex(
     dim: int,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> Tensor:
-    """Regular simplex vertices on S^(d-1): d+1 equidistant unit vectors.
-
-    Forms a spherical 2-design.
-
-    Construction: embed d+1 canonical basis vectors in R^(d+1), subtract
-    their centroid (which places them on a d-dim hyperplane), then use
-    SVD to obtain d-dimensional coordinates and normalize.
-
-    Args:
-        dim: Ambient dimension d.
-        device: Optional torch device.
-        dtype: Optional torch dtype.
-
-    Returns:
-        Tensor of shape (dim+1, dim). Each row is a unit vector.
-    """
+    """Return ``d+1`` regular-simplex vertices embedded in ``R^d``."""
+    _validate_dim(dim)
     n = dim + 1
-    E = torch.eye(n, device=device, dtype=dtype)
-    centered = E - E.mean(dim=0, keepdim=True)
-    # SVD gives d-dim coordinates. Center has rank d in R^(d+1).
-    U, S, _ = torch.linalg.svd(centered, full_matrices=False)
-    coords = U[:, :dim] * S[:dim]
-    coords = coords / coords.norm(dim=-1, keepdim=True).clamp_min(1e-12)
-    return coords
+    eye = torch.eye(n, device=device, dtype=dtype)
+    centered = eye - eye.mean(dim=0, keepdim=True)
+    u, s, _ = torch.linalg.svd(centered, full_matrices=False)
+    points = u[:, :dim] * s[:dim]
+    return points / points.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
 
 def random_haar(
     n_points: int,
     dim: int,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
-    generator: Optional[torch.Generator] = None,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
 ) -> Tensor:
-    """Uniform random samples on S^(d-1) (Haar measure).
-
-    Baseline for comparison against deterministic designs. Samples
-    i.i.d. standard Gaussian vectors and normalizes.
-
-    Args:
-        n_points: Number of samples M.
-        dim: Ambient dimension d.
-        device, dtype: Optional torch options.
-        generator: Optional torch random generator.
-
-    Returns:
-        Tensor of shape (n_points, dim).
-    """
-    z = torch.randn(
-        n_points, dim, device=device, dtype=dtype, generator=generator
+    """Sample independent uniform directions on the unit sphere."""
+    if n_points < 1:
+        raise ValueError("n_points must be positive")
+    _validate_dim(dim)
+    values = torch.randn(
+        n_points,
+        dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
     )
-    return z / z.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    return values / values.norm(dim=-1, keepdim=True).clamp_min(1e-12)
 
 
+def haar_rotation(
+    dim: int,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
+) -> Tensor:
+    """Sample a Haar-distributed orthogonal matrix using QR sign correction."""
+    _validate_dim(dim)
+    matrix = torch.randn(
+        dim,
+        dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
+    )
+    q, r = torch.linalg.qr(matrix)
+    signs = torch.sign(torch.diagonal(r))
+    signs = torch.where(signs == 0, torch.ones_like(signs), signs)
+    return q * signs.unsqueeze(0)
+
+
+def signed_permutation(
+    dim: int,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
+) -> Tensor:
+    """Sample a fast orthogonal signed-permutation matrix.
+
+    This transformation is not Haar distributed. It is useful when exact
+    orthogonality and axis randomization are required without dense QR cost.
+    """
+    _validate_dim(dim)
+    permutation = torch.randperm(dim, device=device, generator=generator)
+    signs = torch.randint(
+        0,
+        2,
+        (dim,),
+        device=device,
+        generator=generator,
+    ).mul_(2).sub_(1)
+    if dtype is not None:
+        signs = signs.to(dtype=dtype)
+    matrix = torch.zeros(dim, dim, device=device, dtype=dtype)
+    matrix[torch.arange(dim, device=device), permutation] = signs
+    return matrix
+
+
+def orthogonal_transform(
+    dim: int,
+    mode: RotationMode,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
+) -> Tensor:
+    """Return an orthogonal transform for the requested randomization mode."""
+    if mode == "haar":
+        return haar_rotation(
+            dim,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+    if mode == "signed_permutation":
+        return signed_permutation(
+            dim,
+            device=device,
+            dtype=dtype,
+            generator=generator,
+        )
+    if mode == "none":
+        return torch.eye(dim, device=device, dtype=dtype)
+    raise ValueError(f"unknown rotation mode: {mode!r}")
+
+
+def random_k_frame(
+    ambient_dim: int,
+    subspace_dim: int,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
+) -> Tensor:
+    """Sample a Haar-distributed orthonormal ``k``-frame with shape ``(k,d)``."""
+    _validate_dim(ambient_dim)
+    if not 1 <= subspace_dim <= ambient_dim:
+        raise ValueError("subspace_dim must lie in [1, ambient_dim]")
+    matrix = torch.randn(
+        ambient_dim,
+        subspace_dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
+    )
+    q, r = torch.linalg.qr(matrix, mode="reduced")
+    signs = torch.sign(torch.diagonal(r))
+    signs = torch.where(signs == 0, torch.ones_like(signs), signs)
+    return (q * signs.unsqueeze(0)).t()
+
+
+# Stable public aliases.
 def random_rotation(
     dim: int,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
-    generator: Optional[torch.Generator] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
 ) -> Tensor:
-    """Sample a uniform random rotation matrix (Haar measure on O(d)).
-
-    Uses the QR-sign-fix construction of Mezzadri (2007):
-    take A ~ Normal(d x d), compute QR = A, then flip signs of columns
-    of Q so that diagonal(R) > 0.
-
-    Args:
-        dim: Matrix dimension d.
-        device, dtype: Optional torch options.
-        generator: Optional torch random generator.
-
-    Returns:
-        Tensor of shape (dim, dim). Orthogonal.
-
-    Reference:
-        Mezzadri (2007). "How to generate random matrices from the classical
-        compact groups." Notices of the AMS 54(5).
-    """
-    A = torch.randn(
-        dim, dim, device=device, dtype=dtype, generator=generator
-    )
-    Q, R = torch.linalg.qr(A)
-    sign = torch.sign(torch.diagonal(R))
-    # Map zeros (measure-zero event) to 1 to avoid NaN
-    sign = torch.where(sign == 0, torch.ones_like(sign), sign)
-    return Q * sign.unsqueeze(0)
+    """Return a Haar orthogonal matrix."""
+    return haar_rotation(dim, device=device, dtype=dtype, generator=generator)
 
 
 def get_design(
     name: str,
     dim: int,
-    n_points: Optional[int] = None,
+    n_points: int | None = None,
     rotate: bool = True,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
-    generator: Optional[torch.Generator] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    generator: torch.Generator | None = None,
 ) -> Tensor:
-    """Factory for spherical designs.
-
-    Args:
-        name: One of 'cross_polytope', 'simplex', 'haar'.
-        dim: Ambient dimension.
-        n_points: Required for 'haar'. Ignored for others.
-        rotate: If True, compose the design with a random rotation. This
-            prevents the encoder from exploiting axis-aligned structure
-            when using the cross-polytope.
-        device, dtype, generator: Optional torch options.
-
-    Returns:
-        Projection matrix of shape (M, dim) where M depends on the design.
-    """
-    if name == 'cross_polytope':
-        U = cross_polytope(dim, device=device, dtype=dtype)
-    elif name == 'simplex':
-        U = simplex(dim, device=device, dtype=dtype)
-    elif name == 'haar':
+    """Construct a named projection design with optional Haar rotation."""
+    if name == "cross_polytope":
+        design = cross_polytope(dim, device=device, dtype=dtype)
+    elif name == "simplex":
+        design = simplex(dim, device=device, dtype=dtype)
+    elif name == "haar":
         if n_points is None:
-            raise ValueError("n_points required for haar design")
-        U = random_haar(
+            raise ValueError("n_points is required for the Haar design")
+        design = random_haar(
             n_points, dim, device=device, dtype=dtype, generator=generator
         )
     else:
-        raise ValueError(f"Unknown design: {name!r}")
-
+        raise ValueError(f"unknown design: {name!r}")
     if rotate:
-        R = random_rotation(
+        design = design @ haar_rotation(
             dim, device=device, dtype=dtype, generator=generator
         )
-        U = U @ R
-
-    return U
+    return design

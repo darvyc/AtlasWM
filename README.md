@@ -1,122 +1,66 @@
 # AtlasWM
 
-**End-to-end joint-embedding predictive world models with structured characteristic-function regularization**
+**End-to-end joint-embedding predictive world models with structured characteristic-function regularization.**
 
 [![CI](https://github.com/darvyc/AtlasWM/actions/workflows/ci.yml/badge.svg)](https://github.com/darvyc/AtlasWM/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-4c1.svg)](CHANGELOG.md)
+[![Version 2.0.0](https://img.shields.io/badge/version-2.0.0-4c1.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-AtlasWM is a compact Joint-Embedding Predictive Architecture for learning action-conditioned latent dynamics directly from pixels. It combines a vision transformer encoder, a causal action-conditioned predictor, and AtlasReg, a structured distribution-matching objective based on empirical characteristic functions.
+AtlasWM learns action-conditioned latent dynamics directly from image trajectories. It combines:
 
-The release provides:
+- a frame-independent Vision Transformer encoder;
+- a causal action-conditioned latent predictor;
+- AtlasReg, a structured characteristic-function discrepancy;
+- closed-loop latent-space planning with the Cross-Entropy Method;
+- reproducible training, evaluation, checkpointing and benchmark orchestration.
 
-- a mathematically identifiable population objective;
-- finite-sample biased and unbiased estimators;
-- structured spherical projection rules with exact low-degree cubature;
-- Gaussian and Student-t latent targets;
-- quadrature and exact Gaussian closed-form backends;
-- one-dimensional and multivariate subspace objectives;
-- latent-space planning with the Cross-Entropy Method;
-- theorem-linked tests, reproducibility instructions, and a fixed-budget benchmark protocol.
+The implementation keeps mathematical guarantees, finite estimators, software tests and task-level evidence separate. It does not convert a population theorem into an empirical performance claim.
 
-AtlasWM builds on the end-to-end JEPA formulation developed in [LeWorldModel](https://arxiv.org/abs/2603.19312) and the isotropic-latent perspective developed in [LeJEPA](https://arxiv.org/abs/2511.08544).
-
-## Abstract
-
-Let `P` be the learned latent distribution and `Q` be a target distribution. AtlasReg measures how different they are by:
-
-1. projecting both distributions onto many one-dimensional directions;
-2. comparing their characteristic functions across a range of frequencies;
-3. weighting and averaging the squared differences.
-
-In plain terms, AtlasReg asks whether the learned latent points have the same location, scale, shape, and tail behaviour as the selected target when viewed from many directions.
-
-The population discrepancy can be written in ASCII form as:
+## System design
 
 ```text
-D_w(P, Q) = average over all unit directions u and all frequencies t of:
-            weight(t) * |CF_P(t * u) - CF_Q(t * u)|^2
-```
-
-Here:
-
-- `CF_P` is the characteristic function of the learned latent distribution;
-- `CF_Q` is the characteristic function of the target distribution;
-- `u` is a unit direction;
-- `t` is a frequency;
-- `weight(t)` controls which frequency ranges matter most.
-
-When the frequency weight is positive almost everywhere and integrable, the population discrepancy is non-negative and equals zero exactly when `P` and `Q` are the same distribution.
-
-Training uses a finite minibatch, a finite set of projection directions, and either numerical frequency quadrature or an exact Gaussian closed form.
-
-The default projection rule is a Haar-rotated cross-polytope. Its full `2 * d` vertices form a spherical 3-design. For symmetric target characteristic functions, opposite directions produce identical squared discrepancies, so AtlasReg evaluates `d` distinct projection lines without changing the loss. At latent dimension `d = 192`, this gives 192 structured projection evaluations per step.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    O[Pixel trajectory] --> E[ViT encoder]
-    E --> Z[Latent sequence]
-    A[Action sequence] --> P[Causal predictor]
-    Z --> P
-    P --> ZP[Predicted next latent]
-    Z --> R[AtlasReg]
-    Z --> LP[Prediction loss]
-    ZP --> LP
-    R --> L[Total objective]
-    LP --> L
-    Z --> CEM[Latent CEM planner]
-    G[Goal image] --> E2[Shared encoder]
-    E2 --> CEM
+observation frames ──> frame-independent ViT ──> latent sequence
+                                                │
+action sequence ────────────────────────────────┼──> causal predictor ──> future latents
+                                                │
+                                                ├──> AtlasReg
+                                                │
+goal observation ──> shared ViT ────────────────┴──> CEM planner
 ```
 
 The training objective is:
 
 ```text
-total loss = prediction loss + regularization weight * AtlasReg loss
+prediction loss + lambda_reg * distribution regularizer
 ```
 
-The prediction term is:
+No encoder or predictor layer computes statistics across batch elements or across trajectory time. A frame's embedding therefore does not change because unrelated samples or later frames are present in the same minibatch.
+
+## AtlasReg
+
+For latent law `P` and target law `Q`, the population discrepancy integrates squared characteristic-function differences over all directions and frequencies:
 
 ```text
-prediction loss = mean squared distance between:
-                  predicted next latent and encoded next latent
+D(P,Q) = integral over u and t of
+         w(t) * |CF_P(tu) - CF_Q(tu)|^2
 ```
 
-For every transition, action `a_t` conditions latent `z_t` when predicting `z_(t+1)`. The same alignment is used in teacher-forced training and autoregressive planning.
+With a positive integrable frequency weight, the continuum objective equals zero exactly when `P = Q`. Training necessarily uses a finite minibatch, finite directions and either finite quadrature or a Gaussian closed form.
 
-## Statistical specification
+AtlasReg provides:
 
-| Component | Specification |
-|---|---|
-| Population metric | Sliced weighted characteristic-function distance |
-| Projection rules | Rotated cross-polytope, regular simplex, iid Haar |
-| Default projection count | `d` distinct antipodal lines |
-| Targets | Standard Gaussian, scaled univariate Student-t |
-| Finite estimator | Biased non-negative V-statistic or unbiased U-statistic |
-| Frequency backend | Trapezoidal quadrature or exact Gaussian BHEP form |
-| Frequency weight | Single-scale or two-scale Gaussian mixture |
-| Matching mode | Raw target matching or studentized shape testing |
-| Subspace mode | 1D projections or k-dimensional Gaussian BHEP |
-| Planning | Receding-horizon CEM in latent space |
+- rotated cross-polytope, regular-simplex and iid Haar directions;
+- exact antipodal reduction for symmetric-target squared CF losses;
+- biased non-negative and unbiased finite-sample estimators;
+- single-scale and two-scale Gaussian frequency weights;
+- exact Gaussian BHEP/MMD forms;
+- Gaussian and one-dimensional Student-t targets;
+- multivariate Gaussian subspace matching;
+- chunked frequency, projection and pairwise computation;
+- cached Haar frames or fast signed-permutation randomization.
 
-## Formal guarantees and scope
-
-| Statement | Status |
-|---|---|
-| The full spherical and frequency objective identifies `P = Q` | Proven under a positive integrable frequency weight |
-| The cross-polytope integrates spherical polynomials through degree 3 | Exact |
-| A Haar-rotated orthonormal basis is unbiased for spherical averages | Exact in rotation expectation |
-| Antipodal projection pairs are redundant for symmetric-target squared CF loss | Exact |
-| The biased Gaussian estimator has a known finite-sample null floor | Exact |
-| The Gaussian-weighted objective has a closed BHEP form | Exact |
-| A finite set of directions and frequencies identifies every distribution | Not asserted |
-| Global optimization avoids every collapsed stationary point | Not asserted |
-| AtlasWM outperforms external world-model baselines on every environment | Not asserted |
-
-The complete derivations, counterexamples, estimator identities, and complexity bounds are in [`docs/theory.md`](docs/theory.md).
+See [`docs/theory.md`](docs/theory.md) for the precise claims and limitations.
 
 ## Installation
 
@@ -127,13 +71,13 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-Requirements:
+Student-t targets require SciPy, included by the development extra or installable with:
 
-- Python 3.10 or later
-- PyTorch 2.0 or later
-- SciPy for Student-t characteristic functions
+```bash
+pip install -e ".[student-t]"
+```
 
-## Quickstart
+## Minimal training step
 
 ```python
 import torch
@@ -152,251 +96,184 @@ model = AtlasWM(
     predictor_heads=8,
     reg_config=AtlasRegConfig(
         design="cross_polytope",
-        rotate=True,
-        deduplicate_antipodes=True,
+        rotation_mode="haar",
+        rotation_refresh_steps=16,
         target="gaussian",
-        standardize_1d=False,
-        estimator="biased",
-        one_d_backend="quadrature",
         kernel="two_scale",
-        subspace_dim=1,
     ),
 )
 
 observations = torch.randn(4, 8, 3, 64, 64)
 actions = torch.randn(4, 8, 2)
-
 losses = model.training_step(observations, actions, lambda_reg=0.1)
 losses["total"].backward()
-
-print({name: float(value) for name, value in losses.items()})
 ```
 
-Train the included synthetic visual-dynamics environment:
+## Reproducible training
 
 ```bash
 atlaswm-train --config configs/default.yaml
 ```
 
-Plan towards a visual goal:
+A compact CPU integration run is available through:
+
+```bash
+atlaswm-train --config configs/smoke.yaml
+```
+
+Each run writes:
+
+```text
+resolved_config.yaml
+system.json
+metrics.jsonl
+checkpoint_last.pt
+checkpoint_best.pt
+evaluation.json
+```
+
+Checkpoints contain model state, optimizer state, scheduler state, full configuration, dataset fingerprint, random-number-generator states, Git commit and system metadata. Training can resume exactly on the same software and hardware stack:
+
+```bash
+atlaswm-train --config configs/default.yaml --resume outputs/default/checkpoint_last.pt
+```
+
+## Trajectory datasets
+
+### Memory-mapped arrays
+
+The recommended large-dataset layout is:
+
+```text
+dataset/
+  observations.npy   # (N,T,C,H,W)
+  actions.npy        # (N,T,A)
+  states.npy         # optional (N,T,S)
+```
+
+Configure it with:
+
+```yaml
+data:
+  name: trajectory_npy
+  path: data/pusht/train
+  observation_file: observations.npy
+  action_file: actions.npy
+  state_file: states.npy
+  sub_length: 4
+  img_size: 224
+```
+
+The arrays are opened with NumPy memory mapping and converted only for the requested trajectory window.
+
+Compact NPZ archives remain supported. Convert them to the scalable format with:
+
+```bash
+python scripts/convert_npz.py \
+  --input trajectories.npz \
+  --output data/converted \
+  --state-key states
+```
+
+A JSON manifest can concatenate multiple memory-mapped shards without loading the complete image corpus into RAM.
+
+Dataset splitting occurs by complete trajectory, not by overlapping windows, preventing train-test leakage.
+
+## Planning
 
 ```python
-from atlaswm.planning import CEMPlanner
+from atlaswm import CEMPlanner
 
 planner = CEMPlanner(
     model,
     horizon=5,
-    n_samples=300,
-    n_iters=30,
-    n_elites=30,
+    n_samples=512,
+    n_iters=8,
+    n_elites=64,
+    action_low=-1.0,
+    action_high=1.0,
 )
 
 action_sequence = planner.plan(current_observation, goal_observation)
 ```
 
-## AtlasReg configurations
-
-### Gaussian target matching
-
-Raw projections constrain location, scale, and distributional shape.
+For multi-frame context, the real actions connecting those frames are mandatory:
 
 ```python
-AtlasRegConfig(
-    target="gaussian",
-    standardize_1d=False,
-    estimator="biased",
+action_sequence = planner.plan(
+    current_observation,
+    goal_observation,
+    context_observations=context_frames,       # (T0,C,H,W)
+    context_actions=historical_actions,         # (T0-1,A)
 )
 ```
 
-### Studentized shape testing
+AtlasWM rejects missing historical actions rather than silently inventing zero controls.
 
-Projection-wise studentization removes batch location and scale.
+## Evaluation
 
-```python
-AtlasRegConfig(
-    target="gaussian",
-    standardize_1d=True,
-    estimator="biased",
-)
-```
-
-This objective tests standardized marginal shape. It does not enforce latent covariance `I`.
-
-### Unbiased finite-sample estimator
-
-```python
-AtlasRegConfig(
-    target="gaussian",
-    standardize_1d=False,
-    estimator="unbiased",
-)
-```
-
-The U-statistic has the correct population expectation and may be negative on an individual finite batch. Batch-dependent standardization and whitening are intentionally incompatible with this estimator.
-
-### Exact Gaussian closed form
-
-```python
-AtlasRegConfig(
-    target="gaussian",
-    one_d_backend="closed_form",
-    kernel="single",
-    lambda_=1.0,
-)
-```
-
-This backend integrates all frequencies analytically and costs `O(M * N^2)`.
-
-### Multivariate BHEP and Henze-Zirkler mode
-
-```python
-AtlasRegConfig(
-    subspace_dim=4,
-    n_subspaces=4,
-    target="gaussian",
-    whiten_kd=True,
-    hz_beta=None,
-)
-```
-
-`hz_beta=None` selects the classical sample-size-dependent Henze-Zirkler bandwidth. A fixed positive value defines a fixed-bandwidth BHEP discrepancy.
-
-### Unit-variance Student-t target
-
-```python
-from atlaswm.statistics import student_t_unit_variance_scale
-
-nu = 5.0
-config = AtlasRegConfig(
-    target="student_t",
-    student_t_nu=nu,
-    student_t_scale=student_t_unit_variance_scale(nu),
-)
-```
-
-For `nu > 2`, the scale factor is:
-
-```text
-scale = square root of ((nu - 2) / nu)
-```
-
-A scale-one Student-t distribution has variance `nu / (nu - 2)`. Applying the scale above gives unit variance.
-
-## How the estimators behave
-
-### Biased estimator
-
-The default estimator is always non-negative. On a finite batch drawn exactly from the target distribution, its expected value is still slightly above zero because the empirical batch is not the complete population.
-
-For a Gaussian target, the expected finite-sample floor is:
-
-```text
-null floor = (1 / N) * (1 - (1 + 2 * beta^2)^(-k / 2))
-```
-
-Here:
-
-- `N` is the number of samples;
-- `k` is the evaluated dimension;
-- `beta` is the Gaussian-kernel bandwidth.
-
-### Unbiased estimator
-
-The unbiased U-statistic removes the expected finite-sample floor. It has the correct population expectation, but an individual minibatch estimate can be negative.
-
-### Raw matching and shape testing
-
-Raw target matching preserves information about latent mean, variance, covariance, and shape.
-
-Studentized one-dimensional testing removes location and scale separately for every projected minibatch. It tests shape but does not force the full latent covariance to equal the identity matrix.
-
-Whitened k-dimensional testing removes location and covariance inside each sampled subspace. Full-dimensional whitening gives the classical affine-invariant normality-testing setting.
-
-## Structured projection rule
-
-The cross-polytope uses the coordinate directions and their opposites before rotation:
-
-```text
-+e_1, -e_1, +e_2, -e_2, ..., +e_d, -e_d
-```
-
-Its complete set is exact for spherical polynomials of degree 3 or lower. The characteristic-function objective is not a degree-3 polynomial, so the design is a structured finite approximation rather than exact integration of the full loss.
-
-A fresh Haar rotation gives every basis direction a uniform marginal distribution on the sphere. Averaging across rotations gives an unbiased estimate of the spherical average for any integrable directional loss.
-
-For symmetric targets, the loss for direction `u` equals the loss for direction `-u`. Evaluating one direction from each opposite pair therefore halves the projection work without changing the averaged loss.
-
-## Verification and reproducibility
-
-Run the complete test suite:
+Evaluate a saved checkpoint:
 
 ```bash
-pytest
+atlaswm-evaluate \
+  --config configs/default.yaml \
+  --checkpoint outputs/default/checkpoint_best.pt
 ```
 
-Reproduce the principal statistical identities:
+The evaluation stack reports:
+
+- one-step and multi-horizon latent prediction error;
+- action sensitivity;
+- effective rank and singular-value concentration;
+- coordinate variance and covariance error;
+- pairwise cosine statistics;
+- held-out physical-state linear probes when labels are available;
+- closed-loop toy-control success and final goal distance when enabled.
+
+## Matched benchmark suite
 
 ```bash
-python scripts/reproduce_statistics.py --seed 42 --dim 8 --samples 128 --trials 128 --output outputs/statistical_verification.json
+python scripts/run_benchmark_suite.py \
+  --config configs/default.yaml \
+  --methods prediction_only covariance full_gaussian_mmd iid_haar_ecf atlas \
+  --seeds 11 23 37 53 71 \
+  --output outputs/benchmark
 ```
 
-Run the regularizer benchmark:
-
-```bash
-python scripts/bench.py --dim 192 --batch-size 512 --n-iters 100
-```
-
-The repository defines an evidence protocol for control experiments, latent diagnostics, compute accounting, statistical reporting, and ablations. See:
-
-- [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md)
-- [`docs/benchmark_protocol.md`](docs/benchmark_protocol.md)
-- [`MODEL_CARD.md`](MODEL_CARD.md)
-- [`paper/atlaswm.md`](paper/atlaswm.md)
-
-## Repository layout
+The suite creates one resolved configuration and artifact directory per method and seed, then writes:
 
 ```text
-AtlasWM/
-|-- atlaswm/
-|   |-- designs.py             # Spherical designs and Haar rotations
-|   |-- statistics.py          # ECF, BHEP, HZ, null-floor, moment identities
-|   |-- targets.py             # Gaussian and Student-t characteristic functions
-|   |-- kernels.py             # Frequency quadrature and Gaussian weights
-|   |-- regularizer.py         # AtlasReg objective
-|   |-- encoder.py             # Vision transformer encoder
-|   |-- predictor.py           # Causal action-conditioned predictor
-|   |-- model.py               # End-to-end world-model objective
-|   |-- planning/              # Latent CEM planner
-|   `-- data.py                # Synthetic and NPZ trajectory datasets
-|-- configs/                   # Reproducible experiment configurations
-|-- docs/
-|   |-- theory.md              # Mathematical foundations
-|   `-- benchmark_protocol.md  # Fixed-budget empirical protocol
-|-- paper/                     # Technical manuscript and bibliography
-|-- scripts/                   # Training, benchmarking, verification
-|-- tests/                     # Unit, mathematical, and integration tests
-|-- MODEL_CARD.md
-`-- REPRODUCIBILITY.md
+runs.jsonl
+aggregate.json
+aggregate.csv
 ```
 
-## Citation
+Reported methods share the encoder, predictor, data, optimizer, training steps and evaluation pipeline. See [`docs/benchmark_protocol.md`](docs/benchmark_protocol.md) for evidence requirements.
 
-```bibtex
-@software{cana2026atlaswm,
-  author  = {Darvy Cana},
-  title   = {AtlasWM: Structured Characteristic-Function Regularization for End-to-End JEPA World Models},
-  year    = {2026},
-  version = {1.0.0},
-  url     = {https://github.com/darvyc/AtlasWM}
-}
+## Verification
+
+```bash
+python -m compileall atlaswm scripts
+pytest --cov=atlaswm --cov-report=term-missing
+python scripts/reproduce_statistics.py \
+  --seed 42 \
+  --dim 8 \
+  --samples 128 \
+  --trials 128 \
+  --output outputs/statistical_verification.json
+python -m build
 ```
 
-Machine-readable citation metadata is available in [`CITATION.cff`](CITATION.cff).
+Continuous integration enforces linting, compilation, tests, branch coverage, package construction and statistical verification across supported Python versions.
 
-## Acknowledgements
+## Scope
 
-AtlasWM builds on the JEPA, LeJEPA, and LeWorldModel research programmes and on the statistical literature concerning Cramer-Wold identification, empirical characteristic functions, spherical designs, BHEP discrepancies, and affine-invariant normality testing.
+AtlasWM is a research system. It is not a safety controller and does not provide collision avoidance, calibrated uncertainty, actuator modelling or deployment guarantees. Physical systems require independent safety constraints and validation.
+
+## Research lineage
+
+AtlasWM builds on joint-embedding predictive architectures, empirical characteristic-function testing, Cramer-Wold identification, spherical designs, Gaussian-kernel discrepancies, Henze-Zirkler testing and Cross-Entropy Method planning. Full references appear in [`paper/atlaswm.md`](paper/atlaswm.md).
 
 ## License
 
-AtlasWM is released under the MIT License. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).
