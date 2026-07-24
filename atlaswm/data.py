@@ -35,23 +35,19 @@ class ToyEnvConfig:
 
 
 def render_toy(positions: np.ndarray, config: ToyEnvConfig | None = None) -> np.ndarray:
-    """Render positions with shape ``(T,2)`` as channel-first RGB frames."""
     cfg = config or ToyEnvConfig()
     positions = np.asarray(positions)
     if positions.ndim != 2 or positions.shape[-1] != 2:
         raise ValueError("positions must have shape (T,2)")
-    length = positions.shape[0]
     images = np.full(
-        (length, 3, cfg.img_size, cfg.img_size),
+        (positions.shape[0], 3, cfg.img_size, cfg.img_size),
         255,
         dtype=np.uint8,
     )
     images[:, :, (0, -1), :] = 0
     images[:, :, :, (0, -1)] = 0
     yy, xx = np.meshgrid(
-        np.arange(cfg.img_size),
-        np.arange(cfg.img_size),
-        indexing="ij",
+        np.arange(cfg.img_size), np.arange(cfg.img_size), indexing="ij"
     )
     for index, position in enumerate(positions):
         center_x = int(np.clip(position[0] * (cfg.img_size - 1), 0, cfg.img_size - 1))
@@ -64,8 +60,6 @@ def render_toy(positions: np.ndarray, config: ToyEnvConfig | None = None) -> np.
 
 
 class ToyVisualEnv:
-    """Minimal stateful environment for closed-loop planning evaluation."""
-
     def __init__(self, config: ToyEnvConfig | None = None, seed: int = 0):
         self.config = config or ToyEnvConfig()
         self.rng = np.random.default_rng(seed)
@@ -106,13 +100,14 @@ class ToyVisualEnv:
 
     def step(self, action: np.ndarray | Tensor) -> tuple[Tensor, float, bool, dict[str, float]]:
         cfg = self.config
-        if isinstance(action, Tensor):
-            action_array = action.detach().cpu().numpy()
-        else:
-            action_array = np.asarray(action)
+        action_array = (
+            action.detach().cpu().numpy() if isinstance(action, Tensor) else np.asarray(action)
+        )
         action_array = np.clip(action_array.astype(np.float32), -cfg.action_limit, cfg.action_limit)
         noise = self.rng.normal(0.0, cfg.action_noise, size=2).astype(np.float32)
-        drift = cfg.restoring_force * (np.array([0.5, 0.5], dtype=np.float32) - self.position)
+        drift = cfg.restoring_force * (
+            np.array([0.5, 0.5], dtype=np.float32) - self.position
+        )
         self.position = np.clip(
             self.position + cfg.dt * (action_array + drift + noise),
             cfg.box_low,
@@ -138,8 +133,11 @@ def generate_toy_trajectory(
     positions[0] = rng.uniform(cfg.box_low, cfg.box_high, size=2)
     center = np.array([0.5, 0.5], dtype=np.float32)
     for index in range(length - 1):
-        action = rng.normal(0.0, 1.0, size=2).astype(np.float32)
-        action = np.clip(action, -cfg.action_limit, cfg.action_limit)
+        action = np.clip(
+            rng.normal(0.0, 1.0, size=2).astype(np.float32),
+            -cfg.action_limit,
+            cfg.action_limit,
+        )
         actions[index] = action
         noise = rng.normal(0.0, cfg.action_noise, size=2).astype(np.float32)
         drift = cfg.restoring_force * (center - positions[index])
@@ -160,6 +158,14 @@ class _WindowedTrajectoryDataset(Dataset):
     @property
     def windows_per_trajectory(self) -> int:
         return self.trajectory_length - self.sub_length + 1
+
+    @property
+    def trajectory_window_ranges(self) -> list[range]:
+        width = self.windows_per_trajectory
+        return [
+            range(trajectory * width, (trajectory + 1) * width)
+            for trajectory in range(self.n_trajectories)
+        ]
 
     def __len__(self) -> int:
         return self.n_trajectories * self.windows_per_trajectory
@@ -253,8 +259,6 @@ def _frame_tensor(values: np.ndarray, normalize_images: bool) -> Tensor:
 
 
 class TrajectoryArrayDataset(_WindowedTrajectoryDataset):
-    """Memory-mapped trajectory arrays stored as separate ``.npy`` files."""
-
     def __init__(
         self,
         path: str | Path,
@@ -288,10 +292,7 @@ class TrajectoryArrayDataset(_WindowedTrajectoryDataset):
             observations = np.moveaxis(observations, -1, -3)
         self.sub_length = sub_length
         self.n_trajectories, self.trajectory_length = _validate_trajectory_shapes(
-            observations,
-            actions,
-            states,
-            sub_length,
+            observations, actions, states, sub_length
         )
         self.obs = observations
         self.actions = actions
@@ -301,10 +302,14 @@ class TrajectoryArrayDataset(_WindowedTrajectoryDataset):
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
         trajectory, window = self._location(index)
         observations = _frame_tensor(self.obs[trajectory, window], self.normalize_images)
-        actions = torch.from_numpy(np.array(self.actions[trajectory, window], dtype=np.float32, copy=True))
+        actions = torch.from_numpy(
+            np.array(self.actions[trajectory, window], dtype=np.float32, copy=True)
+        )
         if self.states is None:
             return observations, actions
-        states = torch.from_numpy(np.array(self.states[trajectory, window], dtype=np.float32, copy=True))
+        states = torch.from_numpy(
+            np.array(self.states[trajectory, window], dtype=np.float32, copy=True)
+        )
         return observations, actions, states
 
     def fingerprint_payload(self) -> dict[str, Any]:
@@ -321,8 +326,6 @@ class TrajectoryArrayDataset(_WindowedTrajectoryDataset):
 
 
 class TrajectoryNPZDataset(_WindowedTrajectoryDataset):
-    """In-memory NPZ adapter intended for compact datasets and conversion."""
-
     def __init__(
         self,
         path: str | Path,
@@ -353,10 +356,7 @@ class TrajectoryNPZDataset(_WindowedTrajectoryDataset):
             observations = np.moveaxis(observations, -1, -3)
         self.sub_length = sub_length
         self.n_trajectories, self.trajectory_length = _validate_trajectory_shapes(
-            observations,
-            actions,
-            states,
-            sub_length,
+            observations, actions, states, sub_length
         )
         self.archive_path = archive_path
         self.obs = observations
@@ -367,10 +367,14 @@ class TrajectoryNPZDataset(_WindowedTrajectoryDataset):
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
         trajectory, window = self._location(index)
         observations = _frame_tensor(self.obs[trajectory, window], self.normalize_images)
-        actions = torch.from_numpy(np.array(self.actions[trajectory, window], dtype=np.float32, copy=True))
+        actions = torch.from_numpy(
+            np.array(self.actions[trajectory, window], dtype=np.float32, copy=True)
+        )
         if self.states is None:
             return observations, actions
-        states = torch.from_numpy(np.array(self.states[trajectory, window], dtype=np.float32, copy=True))
+        states = torch.from_numpy(
+            np.array(self.states[trajectory, window], dtype=np.float32, copy=True)
+        )
         return observations, actions, states
 
     def fingerprint_payload(self) -> dict[str, Any]:
@@ -384,8 +388,6 @@ class TrajectoryNPZDataset(_WindowedTrajectoryDataset):
 
 
 class TrajectoryManifestDataset(Dataset):
-    """Concatenate memory-mapped shards declared by a JSON manifest."""
-
     def __init__(self, manifest: str | Path, sub_length: int):
         manifest_path = Path(manifest)
         with manifest_path.open(encoding="utf-8") as handle:
@@ -407,10 +409,17 @@ class TrajectoryManifestDataset(Dataset):
             for shard in shards
         ]
         self.cumulative = []
+        self._trajectory_window_ranges: list[range] = []
         total = 0
         for dataset in self.datasets:
+            shard_offset = total
+            self._trajectory_window_ranges.extend(
+                range(shard_offset + window.start, shard_offset + window.stop)
+                for window in dataset.trajectory_window_ranges
+            )
             total += len(dataset)
             self.cumulative.append(total)
+        self.n_trajectories = len(self._trajectory_window_ranges)
 
     def __len__(self) -> int:
         return self.cumulative[-1]
@@ -422,6 +431,10 @@ class TrajectoryManifestDataset(Dataset):
         previous = 0 if shard == 0 else self.cumulative[shard - 1]
         return self.datasets[shard][index - previous]
 
+    @property
+    def trajectory_window_ranges(self) -> list[range]:
+        return self._trajectory_window_ranges
+
     def fingerprint_payload(self) -> dict[str, Any]:
         return {
             "kind": "manifest",
@@ -431,27 +444,27 @@ class TrajectoryManifestDataset(Dataset):
 
 
 def split_by_trajectory(
-    dataset: _WindowedTrajectoryDataset,
+    dataset: Dataset,
     *,
     train_fraction: float = 0.8,
     validation_fraction: float = 0.1,
     seed: int = 0,
 ) -> tuple[Subset, Subset, Subset]:
-    """Split complete trajectories, preventing overlapping-window leakage."""
     if train_fraction <= 0 or validation_fraction < 0:
         raise ValueError("invalid split fractions")
     if train_fraction + validation_fraction >= 1:
         raise ValueError("train and validation fractions must sum to less than one")
-    rng = np.random.default_rng(seed)
-    trajectories = rng.permutation(dataset.n_trajectories)
-    train_end = int(round(dataset.n_trajectories * train_fraction))
-    validation_end = train_end + int(round(dataset.n_trajectories * validation_fraction))
+    if not hasattr(dataset, "trajectory_window_ranges"):
+        raise TypeError("dataset does not expose trajectory_window_ranges")
+    ranges = list(dataset.trajectory_window_ranges)
+    trajectories = np.random.default_rng(seed).permutation(len(ranges))
+    train_end = int(round(len(ranges) * train_fraction))
+    validation_end = train_end + int(round(len(ranges) * validation_fraction))
 
     def indices(selected: np.ndarray) -> list[int]:
         output: list[int] = []
-        width = dataset.windows_per_trajectory
         for trajectory in selected.tolist():
-            output.extend(range(trajectory * width, (trajectory + 1) * width))
+            output.extend(ranges[trajectory])
         return output
 
     return (

@@ -69,7 +69,7 @@ The benchmark suite writes raw run records before aggregation. Every aggregate m
 
 ## Resume contract
 
-A checkpoint records model, optimizer, scheduler, epoch, step, best validation value, complete loss history, RNG states, resolved configuration, dataset fingerprint, Git commit and system metadata. Resume is valid only when the data and software stack are compatible.
+A checkpoint records model, optimizer, scheduler, epoch, step, best validation value, complete loss history, RNG states, resolved configuration, dataset fingerprint, Git commit and system metadata. Training uses an epoch-indexed deterministic sampler, so an epoch-boundary resume reproduces the next sample permutation on a compatible software, data and hardware stack.
 
 ## Claim policy
 

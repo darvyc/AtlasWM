@@ -21,8 +21,8 @@ from atlaswm.encoder import ViTEncoder
 from atlaswm.evaluation import (
     evaluate_loader,
     evaluate_prediction_batch,
-    evaluate_toy_control,
     evaluate_state_probe_loader,
+    evaluate_toy_control,
     held_out_linear_probe,
 )
 from atlaswm.model import AtlasWM
@@ -37,7 +37,7 @@ from atlaswm.statistics import (
     spherical_projection_even_moment_coefficient,
     student_t_unit_variance_scale,
 )
-from atlaswm.training import Trainer, TrainerConfig, TrainState
+from atlaswm.training import EpochRandomSampler, Trainer, TrainerConfig, TrainState
 
 __all__ = [
     "AtlasWM",
@@ -57,6 +57,7 @@ __all__ = [
     "CovarianceRegularizer",
     "FullGaussianMMDRegularizer",
     "ZeroRegularizer",
+    "EpochRandomSampler",
     "Trainer",
     "TrainerConfig",
     "TrainState",

@@ -95,3 +95,27 @@ def test_toy_environment_and_npz_adapter(tmp_path: Path):
     obs, action, state = dataset[1]
     assert obs.shape == (3, 3, 8, 8)
     assert action.shape == state.shape == (3, 2)
+
+
+def test_manifest_split_is_trajectory_safe(tmp_path: Path):
+    for shard_index in range(2):
+        shard = tmp_path / f"split_shard{shard_index}"
+        shard.mkdir()
+        np.save(shard / "observations.npy", np.zeros((2, 5, 3, 8, 8), dtype=np.uint8))
+        np.save(shard / "actions.npy", np.zeros((2, 5, 2), dtype=np.float32))
+    manifest = tmp_path / "split_manifest.json"
+    manifest.write_text(
+        '{"shards": [{"path": "split_shard0", "state_file": null}, {"path": "split_shard1", "state_file": null}]}',
+        encoding="utf-8",
+    )
+    dataset = TrajectoryManifestDataset(manifest, sub_length=3)
+    train, validation, test = split_by_trajectory(
+        dataset,
+        train_fraction=0.5,
+        validation_fraction=0.25,
+        seed=9,
+    )
+    membership = [set(part.indices) for part in (train, validation, test)]
+    for window_range in dataset.trajectory_window_ranges:
+        containing = [bool(set(window_range) & group) for group in membership]
+        assert sum(containing) == 1

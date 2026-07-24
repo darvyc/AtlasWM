@@ -246,6 +246,8 @@ The suite creates one resolved configuration and artifact directory per method a
 runs.jsonl
 aggregate.json
 aggregate.csv
+paired_comparisons.json
+paired_comparisons.csv
 ```
 
 Reported methods share the encoder, predictor, data, optimizer, training steps and evaluation pipeline. See [`docs/benchmark_protocol.md`](docs/benchmark_protocol.md) for evidence requirements.

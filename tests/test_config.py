@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 import torch
-import yaml
 
 from atlaswm.config import build_dataset, build_model, load_config, validate_config
 
@@ -13,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_public_configs_are_internally_consistent():
     validate_config(load_config(ROOT / "configs/default.yaml"))
     validate_config(load_config(ROOT / "configs/pusht.yaml"))
+    validate_config(load_config(ROOT / "configs/hz_4d.yaml"))
     validate_config(load_config(ROOT / "configs/smoke.yaml"))
 
 
@@ -38,7 +38,11 @@ def test_smoke_config_builds_and_executes_training_step():
 def test_builds_all_regularizer_baselines():
     config = load_config(ROOT / "configs/smoke.yaml")
     for name in ("none", "covariance", "full_gaussian_mmd"):
-        config["regularizer"] = {"name": name, "beta": 1.0} if name == "full_gaussian_mmd" else {"name": name}
+        config["regularizer"] = (
+            {"name": name, "beta": 1.0}
+            if name == "full_gaussian_mmd"
+            else {"name": name}
+        )
         model = build_model(config)
         observations = torch.randn(2, 3, 3, 16, 16)
         actions = torch.randn(2, 3, 2)

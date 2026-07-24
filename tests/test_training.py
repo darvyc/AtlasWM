@@ -56,5 +56,21 @@ def test_trainer_writes_and_restores_complete_checkpoint(tmp_path: Path):
     )
     assert isinstance(restored, TrainState)
     assert restored.step == state.step
-    for first, second in zip(model.parameters(), restored_model.parameters()):
+    for first, second in zip(
+        model.parameters(), restored_model.parameters(), strict=True
+    ):
         assert torch.equal(first, second)
+
+
+def test_epoch_sampler_reproduces_resume_order():
+    from atlaswm.training import EpochRandomSampler
+
+    dataset = list(range(12))
+    uninterrupted = EpochRandomSampler(dataset, seed=19)
+    uninterrupted.set_epoch(3)
+    expected = list(uninterrupted)
+    resumed = EpochRandomSampler(dataset, seed=19)
+    resumed.set_epoch(3)
+    assert list(resumed) == expected
+    resumed.set_epoch(4)
+    assert list(resumed) != expected

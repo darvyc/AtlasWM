@@ -63,7 +63,9 @@ def test_configuration_rejects_invalid_unbiased_normalization():
     with pytest.raises(ValueError):
         AtlasReg(8, AtlasRegConfig(estimator="unbiased", standardize_1d=True))
     with pytest.raises(ValueError):
-        AtlasReg(8, AtlasRegConfig(subspace_dim=4, target="student_t"))(torch.randn(8, 8))
+        AtlasReg(8, AtlasRegConfig(subspace_dim=4, target="student_t"))(
+            torch.randn(8, 8)
+        )
 
 
 def test_kd_path_is_finite():
@@ -79,3 +81,25 @@ def test_kd_path_is_finite():
     )
     value = regularizer(torch.randn(32, 10))
     assert torch.isfinite(value)
+
+
+def test_iid_haar_evaluation_directions_are_stable_until_reset():
+    torch.manual_seed(7)
+    regularizer = AtlasReg(
+        5,
+        AtlasRegConfig(
+            design="haar",
+            n_haar_projections=17,
+            rotation_mode="none",
+            rotation_refresh_steps=1,
+            resample_during_eval=False,
+        ),
+    )
+    regularizer.eval()
+    latent = torch.randn(32, 5)
+    first = regularizer(latent)
+    second = regularizer(latent)
+    assert torch.equal(first, second)
+    regularizer.reset_randomization()
+    third = regularizer(latent)
+    assert not torch.equal(first, third)

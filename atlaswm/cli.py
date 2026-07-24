@@ -27,6 +27,7 @@ from atlaswm.evaluation import (
 )
 from atlaswm.planning import CEMPlanner
 from atlaswm.training import (
+    EpochRandomSampler,
     Trainer,
     TrainerConfig,
     dataset_fingerprint,
@@ -45,7 +46,7 @@ def resolve_device(name: str) -> torch.device:
 
 def _split_dataset(dataset, data_config: dict, seed: int):
     split = data_config.get("split", {"train": 0.8, "validation": 0.1})
-    if hasattr(dataset, "n_trajectories") and hasattr(dataset, "windows_per_trajectory"):
+    if hasattr(dataset, "trajectory_window_ranges"):
         return split_by_trajectory(
             dataset,
             train_fraction=float(split["train"]),
@@ -66,10 +67,12 @@ def _split_dataset(dataset, data_config: dict, seed: int):
 
 def _loader(dataset, trainer_config: dict, device: torch.device, seed: int, shuffle: bool):
     generator = torch.Generator().manual_seed(seed)
+    sampler = EpochRandomSampler(dataset, seed) if shuffle else None
     return DataLoader(
         dataset,
         batch_size=int(trainer_config["batch_size"]),
-        shuffle=shuffle,
+        shuffle=False,
+        sampler=sampler,
         num_workers=int(trainer_config.get("num_workers", 0)),
         pin_memory=device.type == "cuda",
         persistent_workers=int(trainer_config.get("num_workers", 0)) > 0,
@@ -188,6 +191,7 @@ def train_main() -> None:
                 test_loader,
                 device,
                 max_batches=config.get("evaluation", {}).get("probe_max_batches"),
+                seed=seed + 3,
             )
         )
     except ValueError:

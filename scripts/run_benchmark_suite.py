@@ -77,6 +77,50 @@ def aggregate(records: list[dict]) -> list[dict]:
     return rows
 
 
+def paired_comparisons(records: list[dict], baseline: str = "prediction_only") -> list[dict]:
+    baseline_by_seed = {
+        record["seed"]: record for record in records if record["method"] == baseline
+    }
+    rows = []
+    for method in sorted({record["method"] for record in records} - {baseline}):
+        method_by_seed = {
+            record["seed"]: record for record in records if record["method"] == method
+        }
+        shared_seeds = sorted(set(baseline_by_seed) & set(method_by_seed))
+        if not shared_seeds:
+            continue
+        common_metrics = sorted(
+            key
+            for key in baseline_by_seed[shared_seeds[0]]
+            if key not in {"method", "seed", "run_dir"}
+            and isinstance(baseline_by_seed[shared_seeds[0]][key], (int, float))
+            and key in method_by_seed[shared_seeds[0]]
+        )
+        for metric in common_metrics:
+            differences = [
+                float(method_by_seed[seed][metric])
+                - float(baseline_by_seed[seed][metric])
+                for seed in shared_seeds
+            ]
+            standard_deviation = statistics.stdev(differences) if len(differences) > 1 else 0.0
+            rows.append(
+                {
+                    "method": method,
+                    "baseline": baseline,
+                    "metric": metric,
+                    "seeds": len(differences),
+                    "mean_difference": statistics.fmean(differences),
+                    "std_difference": standard_deviation,
+                    "ci95_difference": (
+                        1.96 * standard_deviation / len(differences) ** 0.5
+                        if len(differences) > 1
+                        else 0.0
+                    ),
+                }
+            )
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -90,6 +134,7 @@ def main() -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
     records = []
     raw_path = root / "runs.jsonl"
+    raw_path.unlink(missing_ok=True)
     for method in args.methods:
         for seed in args.seeds:
             run_dir = root / "runs" / method / f"seed_{seed}"
@@ -107,8 +152,13 @@ def main() -> None:
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
 
     rows = aggregate(records)
+    comparisons = paired_comparisons(records)
     (root / "aggregate.json").write_text(
         json.dumps(rows, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (root / "paired_comparisons.json").write_text(
+        json.dumps(comparisons, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     fieldnames = sorted({key for row in rows for key in row})
@@ -116,7 +166,15 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-    print(json.dumps(rows, indent=2, sort_keys=True))
+    if comparisons:
+        comparison_fields = sorted({key for row in comparisons for key in row})
+        with (root / "paired_comparisons.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=comparison_fields)
+            writer.writeheader()
+            writer.writerows(comparisons)
+    print(json.dumps({"aggregate": rows, "paired": comparisons}, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

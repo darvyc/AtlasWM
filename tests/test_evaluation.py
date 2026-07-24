@@ -24,7 +24,8 @@ def test_prediction_evaluation_and_probe():
     with torch.no_grad():
         latent = model.encode(observations)
     probe = held_out_linear_probe(latent, torch.stack([item[2] for item in batch]))
-    assert set(probe) == {"linear_probe_mse", "linear_probe_r2"}
+    assert probe["linear_probe_train_samples"] > 0
+    assert probe["linear_probe_test_samples"] > 0
 
 
 def test_loader_evaluation():
@@ -32,5 +33,7 @@ def test_loader_evaluation():
     dataset = build_dataset(config)
     loader = DataLoader(dataset, batch_size=2)
     model = build_model(config)
-    metrics = evaluate_loader(model, loader, torch.device("cpu"), max_batches=2, max_horizon=1)
+    metrics = evaluate_loader(
+        model, loader, torch.device("cpu"), max_batches=2, max_horizon=1
+    )
     assert metrics["one_step_mse"] >= 0

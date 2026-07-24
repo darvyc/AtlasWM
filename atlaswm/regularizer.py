@@ -42,18 +42,14 @@ class AtlasRegConfig:
     rotation_refresh_steps: int = 1
     resample_during_eval: bool = False
     deduplicate_antipodes: bool = True
-
     subspace_dim: int = 1
     n_subspaces: int = 1
-
     target: TargetName = "gaussian"
     student_t_nu: float = 5.0
     student_t_scale: float = 1.0
-
     standardize_1d: bool = False
     whiten_kd: bool = False
     estimator: EstimatorName = "biased"
-
     one_d_backend: OneDBackend = "quadrature"
     kernel: KernelName = "two_scale"
     lambda_: float = 1.0
@@ -62,7 +58,6 @@ class AtlasRegConfig:
     alpha: float = 0.5
     n_knots: int = 33
     t_max: float | None = None
-
     hz_beta: float | None = 1.0
     eps: float = 1e-6
     projection_chunk_size: int = 256
@@ -70,19 +65,12 @@ class AtlasRegConfig:
     pair_chunk_size: int = 512
 
     def __post_init__(self) -> None:
-        """Translate the original boolean rotation option to the explicit mode."""
         if self.rotate is not None:
             self.rotation_mode = "haar" if self.rotate else "none"
 
 
 class AtlasReg(nn.Module):
-    """Approximate a sliced characteristic-function discrepancy.
-
-    The implementation exposes every approximation explicitly: finite samples,
-    finite projection directions, finite frequency quadrature, and optional
-    subspace sampling. No finite configuration is represented as an exact test
-    of equality between arbitrary distributions.
-    """
+    """Approximate a sliced characteristic-function discrepancy."""
 
     def __init__(self, dim: int, config: AtlasRegConfig | None = None):
         super().__init__()
@@ -91,14 +79,12 @@ class AtlasReg(nn.Module):
         self.dim = dim
         self.config = config or AtlasRegConfig()
         self._validate_config()
-
         cfg = self.config
-        self.target: Target
-        if cfg.target == "gaussian":
-            self.target = StandardGaussian()
-        else:
-            self.target = StudentT(cfg.student_t_nu, cfg.student_t_scale)
-
+        self.target: Target = (
+            StandardGaussian()
+            if cfg.target == "gaussian"
+            else StudentT(cfg.student_t_nu, cfg.student_t_scale)
+        )
         if cfg.design == "cross_polytope":
             design = cross_polytope(dim)
             if cfg.deduplicate_antipodes:
@@ -108,37 +94,37 @@ class AtlasReg(nn.Module):
             self.register_buffer("base_design", simplex(dim), persistent=False)
         else:
             self.base_design = None
-
         self.register_buffer("cached_rotation", torch.empty(0), persistent=False)
+        self.register_buffer("cached_directions", torch.empty(0), persistent=False)
         self.register_buffer(
             "rotation_age",
             torch.tensor(cfg.rotation_refresh_steps, dtype=torch.long),
             persistent=False,
         )
-
+        self.register_buffer(
+            "direction_age",
+            torch.tensor(cfg.rotation_refresh_steps, dtype=torch.long),
+            persistent=False,
+        )
         if cfg.subspace_dim == 1 and cfg.one_d_backend == "quadrature":
-            if cfg.kernel == "single":
-                rule = gaussian_kernel(
-                    lambda_=cfg.lambda_,
-                    n_knots=cfg.n_knots,
-                    t_max=cfg.t_max,
+            rule = (
+                gaussian_kernel(
+                    lambda_=cfg.lambda_, n_knots=cfg.n_knots, t_max=cfg.t_max
                 )
-            else:
-                rule = two_scale_gaussian_kernel(
+                if cfg.kernel == "single"
+                else two_scale_gaussian_kernel(
                     lambda_1=cfg.lambda_1,
                     lambda_2=cfg.lambda_2,
                     alpha=cfg.alpha,
                     n_knots=cfg.n_knots,
                     t_max=cfg.t_max,
                 )
-            self.register_buffer("quad_nodes", rule.nodes, persistent=False)
-            self.register_buffer(
-                "quad_weights",
-                rule.integration_weights,
-                persistent=False,
             )
-            target_cf = self.target.char_fn_1d(rule.nodes)
-            self.register_buffer("target_cf", target_cf, persistent=False)
+            self.register_buffer("quad_nodes", rule.nodes, persistent=False)
+            self.register_buffer("quad_weights", rule.integration_weights, persistent=False)
+            self.register_buffer(
+                "target_cf", self.target.char_fn_1d(rule.nodes), persistent=False
+            )
 
     def _validate_config(self) -> None:
         cfg = self.config
@@ -180,9 +166,10 @@ class AtlasReg(nn.Module):
             raise ValueError("chunk sizes must be positive")
 
     def reset_randomization(self) -> None:
-        """Discard cached random frames, useful before deterministic evaluation."""
         self.cached_rotation = self.cached_rotation.new_empty(0)
+        self.cached_directions = self.cached_directions.new_empty(0)
         self.rotation_age.fill_(self.config.rotation_refresh_steps)
+        self.direction_age.fill_(self.config.rotation_refresh_steps)
 
     def _get_rotation(self, device: torch.device, dtype: torch.dtype) -> Tensor:
         cfg = self.config
@@ -190,15 +177,13 @@ class AtlasReg(nn.Module):
             return torch.eye(self.dim, device=device, dtype=dtype)
         should_refresh = self.cached_rotation.numel() == 0
         should_refresh = should_refresh or int(self.rotation_age.item()) >= cfg.rotation_refresh_steps
-        should_refresh = should_refresh and (self.training or cfg.resample_during_eval or self.cached_rotation.numel() == 0)
+        should_refresh = should_refresh and (
+            self.training or cfg.resample_during_eval or self.cached_rotation.numel() == 0
+        )
         if should_refresh:
-            rotation = orthogonal_transform(
-                self.dim,
-                cfg.rotation_mode,
-                device=device,
-                dtype=dtype,
+            self.cached_rotation = orthogonal_transform(
+                self.dim, cfg.rotation_mode, device=device, dtype=dtype
             )
-            self.cached_rotation = rotation
             self.rotation_age.zero_()
         else:
             self.cached_rotation = self.cached_rotation.to(device=device, dtype=dtype)
@@ -208,12 +193,25 @@ class AtlasReg(nn.Module):
     def _get_1d_directions(self, device: torch.device, dtype: torch.dtype) -> Tensor:
         cfg = self.config
         if self.base_design is None:
-            return random_haar(
-                cfg.n_haar_projections,
-                self.dim,
-                device=device,
-                dtype=dtype,
+            should_refresh = self.cached_directions.numel() == 0
+            should_refresh = should_refresh or int(self.direction_age.item()) >= cfg.rotation_refresh_steps
+            should_refresh = should_refresh and (
+                self.training or cfg.resample_during_eval or self.cached_directions.numel() == 0
             )
+            if should_refresh:
+                self.cached_directions = random_haar(
+                    cfg.n_haar_projections,
+                    self.dim,
+                    device=device,
+                    dtype=dtype,
+                )
+                self.direction_age.zero_()
+            else:
+                self.cached_directions = self.cached_directions.to(
+                    device=device, dtype=dtype
+                )
+            self.direction_age.add_(1)
+            return self.cached_directions
         directions = self.base_design.to(device=device, dtype=dtype)
         if cfg.rotation_mode != "none":
             directions = directions @ self._get_rotation(device, dtype)
@@ -233,9 +231,7 @@ class AtlasReg(nn.Module):
         sample_count, dim = centered.shape
         covariance = centered.t() @ centered / max(sample_count, 1)
         covariance = covariance + self.config.eps * torch.eye(
-            dim,
-            device=projected.device,
-            dtype=projected.dtype,
+            dim, device=projected.device, dtype=projected.dtype
         )
         cholesky = torch.linalg.cholesky(covariance)
         return torch.linalg.solve_triangular(cholesky, centered.t(), upper=False).t()
@@ -248,9 +244,7 @@ class AtlasReg(nn.Module):
             raise ValueError("at least one latent sample is required")
         if self.config.estimator == "unbiased" and latent.shape[0] < 2:
             raise ValueError("unbiased estimator requires at least two samples")
-        if self.config.subspace_dim == 1:
-            return self._forward_1d(latent)
-        return self._forward_kd(latent)
+        return self._forward_1d(latent) if self.config.subspace_dim == 1 else self._forward_kd(latent)
 
     def _forward_1d(self, latent: Tensor) -> Tensor:
         cfg = self.config
@@ -301,8 +295,6 @@ class AtlasReg(nn.Module):
 
     def _forward_kd(self, latent: Tensor) -> Tensor:
         cfg = self.config
-        if cfg.target != "gaussian":
-            raise NotImplementedError("k-dimensional matching supports Gaussian targets only")
         beta = cfg.hz_beta
         if beta is None:
             beta = henze_zirkler_beta(latent.shape[0], cfg.subspace_dim)

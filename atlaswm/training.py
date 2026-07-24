@@ -18,6 +18,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.utils.data import Sampler
 
 from atlaswm.diagnostics import latent_diagnostics
 
@@ -58,6 +59,30 @@ def seed_worker(worker_id: int) -> None:
     worker_seed = torch.initial_seed() % (2**32)
     np.random.seed(worker_seed)
     random.seed(worker_seed)
+
+
+class EpochRandomSampler(Sampler[int]):
+    """Deterministic epoch-indexed permutation sampler.
+
+    Epoch ordering depends only on ``seed + epoch``. A checkpoint restored at an
+    epoch boundary therefore receives the same next permutation as an
+    uninterrupted run.
+    """
+
+    def __init__(self, data_source, seed: int):
+        self.data_source = data_source
+        self.seed = int(seed)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        generator = torch.Generator().manual_seed(self.seed + self.epoch)
+        return iter(torch.randperm(len(self.data_source), generator=generator).tolist())
+
+    def __len__(self) -> int:
+        return len(self.data_source)
 
 
 def system_information() -> dict[str, Any]:
@@ -236,10 +261,7 @@ class Trainer:
             batch_size = observations.shape[0]
             examples += batch_size
             state.step += 1
-            record = {
-                key: float(loss.detach())
-                for key, loss in losses.items()
-            }
+            record = {key: float(loss.detach()) for key, loss in losses.items()}
             state.loss_history.append({"step": float(state.step), **record})
             for key in totals:
                 totals[key] += record[key] * batch_size
@@ -298,6 +320,8 @@ class Trainer:
     ) -> TrainState:
         state = state or TrainState()
         for _ in range(state.epoch, self.config.epochs):
+            if hasattr(train_loader.sampler, "set_epoch"):
+                train_loader.sampler.set_epoch(state.epoch)
             train_metrics = self.train_epoch(train_loader, state)
             state.epoch += 1
             self.logger.write(
@@ -308,7 +332,6 @@ class Trainer:
                     **train_metrics,
                 }
             )
-            validation_metrics = None
             if (
                 validation_loader is not None
                 and state.epoch % self.config.validate_every == 0

@@ -74,4 +74,4 @@ python scripts/run_benchmark_suite.py \
   --output outputs/benchmark
 ```
 
-The suite writes raw records before aggregate tables. No aggregate claim is valid without the corresponding raw outputs.
+The suite writes raw records before aggregate tables and computes paired differences against the prediction-only control on shared seeds. No aggregate claim is valid without the corresponding raw outputs.
