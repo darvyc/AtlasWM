@@ -1,58 +1,147 @@
 # AtlasWM
 
-**End-to-end JEPA world models with structured characteristic-function distribution matching. Based on LeWorldModel by Lucas Maes, Quentin Le Lidec, Damien Scieur, Yann LeCun, and Randall Balestriero.**
+**End-to-end joint-embedding predictive world models with structured characteristic-function regularization**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/darvyc/AtlasWM/actions/workflows/ci.yml/badge.svg)](https://github.com/darvyc/AtlasWM/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-4c1.svg)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-AtlasWM is a compact Joint-Embedding Predictive Architecture trained from raw pixels without an EMA target encoder, stop-gradient, or pretrained visual backbone. Its regularizer, AtlasReg, matches latent projections to a chosen target through empirical characteristic functions.
+AtlasWM is a compact Joint-Embedding Predictive Architecture for learning action-conditioned latent dynamics directly from pixels. It combines a vision transformer encoder, a causal action-conditioned predictor, and AtlasReg, a structured distribution-matching objective based on empirical characteristic functions.
 
-The implementation now distinguishes exact mathematics from finite approximation:
+The release provides:
 
-- The population sliced characteristic-function objective identifies a distribution.
-- A finite projection and frequency rule is a training approximation, not a proof of equality in distribution.
-- A rotated cross-polytope is exact for spherical polynomials through degree 3 and unbiased over random rotations for general integrands.
-- Antipodal projections are redundant for symmetric targets, so the default computes `d` distinct projection lines rather than evaluating the same loss at `2d` vertices.
-- Finite Gaussian batches have a known positive biased-estimator floor. An unbiased U-statistic option is available.
-- Gaussian-weighted CF matching has an exact BHEP/Henze-Zirkler closed form for validation and multivariate subspaces.
+- a mathematically identifiable population objective;
+- finite-sample biased and unbiased estimators;
+- structured spherical projection rules with exact low-degree cubature;
+- Gaussian and Student-t latent targets;
+- quadrature and exact Gaussian closed-form backends;
+- one-dimensional and multivariate subspace objectives;
+- latent-space planning with the Cross-Entropy Method;
+- theorem-linked tests, reproducibility instructions, and a fixed-budget benchmark protocol.
 
-See [`docs/theory.md`](docs/theory.md) for the complete derivations and guarantee table.
+AtlasWM builds on the end-to-end JEPA formulation developed in [LeWorldModel](https://arxiv.org/abs/2603.19312) and the isotropic-latent perspective developed in [LeJEPA](https://arxiv.org/abs/2511.08544).
 
-## What AtlasReg adds
+## Abstract
 
-| Axis | Options |
+Let `P` denote the learned latent distribution and `Q` a target distribution. AtlasReg minimizes a sliced characteristic-function discrepancy
+
+$$
+\mathcal{D}_w(P,Q)
+=
+\int_{\mathbb{S}^{d-1}}\int_{\mathbb{R}}
+w(t)\left|\varphi_P(tu)-\varphi_Q(tu)\right|^2
+\,dt\,d\sigma(u).
+$$
+
+For an integrable weight satisfying `w(t) > 0` almost everywhere, the population objective is non-negative and equals zero exactly when `P = Q`. Training replaces the population distribution, sphere integral, and frequency integral with a minibatch estimator, a structured direction rule, and numerical quadrature or a Gaussian closed form.
+
+The default projection rule is a Haar-rotated cross-polytope. Its full `2d` vertices form a spherical 3-design. For symmetric target characteristic functions, antipodal directions produce identical squared discrepancies, so AtlasReg evaluates `d` distinct projection lines without altering the objective. At `d = 192`, this gives 192 structured projection evaluations per step.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    O[Pixel trajectory] --> E[ViT encoder]
+    E --> Z[Latent sequence]
+    A[Action sequence] --> P[Causal predictor]
+    Z --> P
+    P --> ZP[Predicted next latent]
+    Z --> R[AtlasReg]
+    Z --> LP[Prediction loss]
+    ZP --> LP
+    R --> L[Total objective]
+    LP --> L
+    Z --> CEM[Latent CEM planner]
+    G[Goal image] --> E2[Shared encoder]
+    E2 --> CEM
+```
+
+The training objective is
+
+$$
+\mathcal{L}
+=
+\mathcal{L}_{\mathrm{pred}}
++
+\lambda_{\mathrm{reg}}\mathcal{L}_{\mathrm{AtlasReg}},
+$$
+
+with
+
+$$
+\mathcal{L}_{\mathrm{pred}}
+=
+\frac{1}{B(T-1)}
+\sum_{b,t}
+\left\|\widehat z_{b,t+1}-z_{b,t+1}\right\|_2^2.
+$$
+
+Action `a_t` conditions latent `z_t` when predicting `z_{t+1}` in both teacher-forced training and autoregressive planning.
+
+## Statistical specification
+
+| Component | Specification |
 |---|---|
-| Projection rule | Rotated cross-polytope, simplex, or iid Haar directions |
-| Statistical target | Isotropic Gaussian or scaled Student-t in the 1D path |
-| Estimator | Biased non-negative empirical discrepancy or unbiased U-statistic |
-| Frequency integration | Fast quadrature or exact Gaussian closed form |
-| Matching mode | Raw target matching or batch-standardized shape testing |
-| Subspace dimension | 1D projected ECF or k-D BHEP/Henze-Zirkler discrepancy |
+| Population metric | Sliced weighted characteristic-function distance |
+| Projection rules | Rotated cross-polytope, regular simplex, iid Haar |
+| Default projection count | `d` distinct antipodal lines |
+| Targets | Standard Gaussian, scaled univariate Student-t |
+| Finite estimator | Biased non-negative V-statistic or unbiased U-statistic |
+| Frequency backend | Trapezoidal quadrature or exact Gaussian BHEP form |
+| Frequency weight | Single-scale or two-scale Gaussian mixture |
+| Matching mode | Raw target matching or studentized shape testing |
+| Subspace mode | 1D projections or k-dimensional Gaussian BHEP |
+| Planning | Receding-horizon CEM in latent space |
 
-At latent dimension `d=192`, the symmetric-target cross-polytope path uses `192` distinct antipodal lines. The full `384`-vertex cross-polytope remains the spherical 3-design, but opposite vertices give exactly the same squared CF loss.
+## Formal guarantees and scope
 
-## Install
+| Statement | Status |
+|---|---|
+| The full spherical and frequency objective identifies `P = Q` | Proven under a positive integrable frequency weight |
+| The cross-polytope integrates spherical polynomials through degree 3 | Exact |
+| A Haar-rotated orthonormal basis is unbiased for spherical averages | Exact in rotation expectation |
+| Antipodal projection pairs are redundant for symmetric-target squared CF loss | Exact |
+| The biased Gaussian estimator has a known finite-sample null floor | Exact |
+| The Gaussian-weighted objective admits a closed BHEP form | Exact |
+| A finite set of directions and frequencies identifies every distribution | Not asserted |
+| Global optimization avoids every collapsed stationary point | Not asserted |
+| AtlasWM outperforms external world-model baselines on every environment | Not asserted |
+
+The complete derivations, counterexamples, estimator identities, and complexity bounds are in [`docs/theory.md`](docs/theory.md).
+
+## Installation
 
 ```bash
 git clone https://github.com/darvyc/AtlasWM.git
 cd AtlasWM
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.10+ and PyTorch 2.0+. SciPy is needed for the Student-t target.
+Requirements:
+
+- Python 3.10 or later
+- PyTorch 2.0 or later
+- SciPy for Student-t characteristic functions
 
 ## Quickstart
 
 ```python
 import torch
-from atlaswm import AtlasWM, AtlasRegConfig
+
+from atlaswm import AtlasRegConfig, AtlasWM
 
 model = AtlasWM(
-    img_size=224,
-    patch_size=14,
+    img_size=64,
+    patch_size=8,
     embed_dim=192,
     action_dim=2,
-    history_length=3,
+    history_length=8,
+    encoder_depth=4,
+    encoder_heads=3,
+    predictor_depth=4,
+    predictor_heads=8,
     reg_config=AtlasRegConfig(
         design="cross_polytope",
         rotate=True,
@@ -60,15 +149,25 @@ model = AtlasWM(
         target="gaussian",
         standardize_1d=False,
         estimator="biased",
+        one_d_backend="quadrature",
         kernel="two_scale",
         subspace_dim=1,
     ),
 )
 
-# obs:     (B, T, 3, H, W)
-# actions: (B, T, action_dim)
-losses = model.training_step(obs, actions, lambda_reg=0.1)
+observations = torch.randn(4, 8, 3, 64, 64)
+actions = torch.randn(4, 8, 2)
+
+losses = model.training_step(observations, actions, lambda_reg=0.1)
 losses["total"].backward()
+
+print({name: float(value) for name, value in losses.items()})
+```
+
+Train the included synthetic visual-dynamics environment:
+
+```bash
+atlaswm-train --config configs/default.yaml
 ```
 
 Plan towards a visual goal:
@@ -76,17 +175,22 @@ Plan towards a visual goal:
 ```python
 from atlaswm.planning import CEMPlanner
 
-planner = CEMPlanner(model, horizon=5, n_samples=300, n_iters=30)
-actions = planner.plan(current_obs, goal_obs)
+planner = CEMPlanner(
+    model,
+    horizon=5,
+    n_samples=300,
+    n_iters=30,
+    n_elites=30,
+)
+
+action_sequence = planner.plan(current_observation, goal_observation)
 ```
 
-The rollout implementation aligns action `a_t` with latent `z_t` when predicting `z_(t+1)`. Earlier versions shifted candidate actions by one step during planning.
+## AtlasReg configurations
 
-## Regularizer modes
+### Gaussian target matching
 
-### True Gaussian target matching
-
-Raw projections retain mean, variance, and shape information:
+Raw projections constrain location, scale, and distributional shape.
 
 ```python
 AtlasRegConfig(
@@ -96,11 +200,9 @@ AtlasRegConfig(
 )
 ```
 
-This is the default.
+### Studentized shape testing
 
-### Studentized projection shape testing
-
-Projection studentization deliberately removes location and scale:
+Projection-wise studentization removes batch location and scale.
 
 ```python
 AtlasRegConfig(
@@ -110,9 +212,9 @@ AtlasRegConfig(
 )
 ```
 
-This tests standardized marginal shape. It does not enforce latent covariance `I`.
+This objective tests standardized marginal shape. It does not enforce latent covariance `I`.
 
-### Unbiased finite-sample diagnostic
+### Unbiased finite-sample estimator
 
 ```python
 AtlasRegConfig(
@@ -122,7 +224,7 @@ AtlasRegConfig(
 )
 ```
 
-The unbiased estimate has the correct population expectation but can be negative on a finite batch. It is intentionally incompatible with batch-dependent standardization and whitening.
+The U-statistic has the correct population expectation and may be negative on an individual finite batch. Batch-dependent standardization and whitening are intentionally incompatible with this estimator.
 
 ### Exact Gaussian closed form
 
@@ -135,92 +237,117 @@ AtlasRegConfig(
 )
 ```
 
-This integrates all frequencies analytically but costs `O(MN^2)`, so quadrature remains the practical default.
+This backend integrates all frequencies analytically and costs `O(MN^2)`.
 
-### Multivariate BHEP / Henze-Zirkler
+### Multivariate BHEP and Henze-Zirkler mode
 
 ```python
 AtlasRegConfig(
     subspace_dim=4,
     n_subspaces=4,
     target="gaussian",
-    whiten_kd=False,
-    hz_beta=1.0,
+    whiten_kd=True,
+    hz_beta=None,
 )
 ```
 
-Set `whiten_kd=True` for covariance-standardized normal-shape testing within each sampled subspace. Set `hz_beta=None` to use the classical sample-size-dependent Henze-Zirkler bandwidth.
+`hz_beta=None` selects the classical sample-size-dependent Henze-Zirkler bandwidth. A fixed positive value defines a fixed-bandwidth BHEP discrepancy.
 
-### Student-t target
+### Unit-variance Student-t target
 
 ```python
 from atlaswm.statistics import student_t_unit_variance_scale
 
 nu = 5.0
-AtlasRegConfig(
+config = AtlasRegConfig(
     target="student_t",
     student_t_nu=nu,
     student_t_scale=student_t_unit_variance_scale(nu),
 )
 ```
 
-A scale-one Student-t has variance `nu/(nu-2)` when `nu>2`. Heavy tails do not by themselves imply low intrinsic dimension.
+For `nu > 2`, the scale factor is
+
+$$
+s=\sqrt{\frac{\nu-2}{\nu}}.
+$$
+
+## Verification and reproducibility
+
+Run the complete test suite:
+
+```bash
+pytest
+```
+
+Reproduce the principal statistical identities:
+
+```bash
+python scripts/reproduce_statistics.py \
+  --seed 42 \
+  --dim 8 \
+  --samples 128 \
+  --trials 128 \
+  --output outputs/statistical_verification.json
+```
+
+Run the regularizer benchmark:
+
+```bash
+python scripts/bench.py --dim 192 --batch-size 512 --n-iters 100
+```
+
+The repository defines an evidence protocol for control experiments, latent diagnostics, compute accounting, statistical reporting, and ablations. See:
+
+- [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md)
+- [`docs/benchmark_protocol.md`](docs/benchmark_protocol.md)
+- [`MODEL_CARD.md`](MODEL_CARD.md)
+- [`paper/atlaswm.md`](paper/atlaswm.md)
 
 ## Repository layout
 
 ```text
-atlaswm/
+AtlasWM/
 ├── atlaswm/
-│   ├── designs.py       # Spherical designs and Haar rotations
-│   ├── statistics.py    # BHEP, HZ bandwidth, null floor, moment formulae
-│   ├── targets.py       # Gaussian and numerically stable Student-t CFs
-│   ├── kernels.py       # Gaussian frequency quadrature
-│   ├── regularizer.py   # AtlasReg
-│   ├── encoder.py       # ViT encoder
-│   ├── predictor.py     # Causal action-conditioned predictor
-│   ├── model.py         # End-to-end objective
-│   ├── planning/        # CEM latent planner
-│   └── data.py          # Synthetic trajectory scaffold
-├── tests/
-├── configs/
-├── docs/theory.md
-├── examples/
-└── scripts/
+│   ├── designs.py             # Spherical designs and Haar rotations
+│   ├── statistics.py          # ECF, BHEP, HZ, null-floor, moment identities
+│   ├── targets.py             # Gaussian and Student-t characteristic functions
+│   ├── kernels.py             # Frequency quadrature and Gaussian weights
+│   ├── regularizer.py         # AtlasReg objective
+│   ├── encoder.py             # Vision transformer encoder
+│   ├── predictor.py           # Causal action-conditioned predictor
+│   ├── model.py               # End-to-end world-model objective
+│   ├── planning/              # Latent CEM planner
+│   └── data.py                # Synthetic trajectory environment
+├── configs/                   # Reproducible experiment configurations
+├── docs/
+│   ├── theory.md              # Mathematical foundations
+│   └── benchmark_protocol.md  # Fixed-budget empirical protocol
+├── paper/                     # Technical manuscript and bibliography
+├── scripts/                   # Training, benchmarking, verification
+├── tests/                     # Unit, mathematical, and integration tests
+├── MODEL_CARD.md
+└── REPRODUCIBILITY.md
 ```
-
-## Testing
-
-```bash
-pytest -v tests/
-```
-
-The mathematical tests cover:
-
-- exact cross-polytope second and third moments;
-- the explicit fourth-moment limitation of a 3-design;
-- equality of full and antipodally deduplicated symmetric-target losses;
-- agreement between dense numerical integration and the Gaussian BHEP closed form;
-- the analytic finite-sample Gaussian null floor;
-- biased versus unbiased estimators;
-- stable Student-t CF evaluation at large degrees of freedom;
-- current-action alignment in autoregressive rollout;
-- end-to-end gradient flow.
-
-## Scope and validation status
-
-AtlasWM is a research scaffold, not yet a reproduced benchmark result. The repository includes a synthetic image trajectory environment and unit tests, but not full PushT, OGBench, DMControl, or LeWorldModel reproduction runs. Claims of improved control performance require fixed-budget experiments with seeds, confidence intervals, and published checkpoints.
 
 ## Citation
 
 ```bibtex
-@software{atlaswm2026,
-  title  = {AtlasWM: JEPA World Models with Structured Distribution Matching},
-  author = {{Darvy C.}},
-  year   = {2026},
-  url    = {https://github.com/darvyc/AtlasWM},
+@software{cana2026atlaswm,
+  author  = {Darvy Cana},
+  title   = {AtlasWM: Structured Characteristic-Function Regularization for End-to-End JEPA World Models},
+  year    = {2026},
+  version = {1.0.0},
+  url     = {https://github.com/darvyc/AtlasWM}
 }
 ```
 
+Machine-readable citation metadata is available in [`CITATION.cff`](CITATION.cff).
+
+## Acknowledgements
+
+AtlasWM builds on the JEPA, LeJEPA, and LeWorldModel research programmes and on the statistical literature concerning Cramer-Wold identification, empirical characteristic functions, spherical designs, BHEP discrepancies, and affine-invariant normality testing.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+AtlasWM is released under the MIT License. See [`LICENSE`](LICENSE).
