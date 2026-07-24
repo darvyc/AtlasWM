@@ -24,19 +24,34 @@ AtlasWM builds on the end-to-end JEPA formulation developed in [LeWorldModel](ht
 
 ## Abstract
 
-Let `P` denote the learned latent distribution and `Q` a target distribution. AtlasReg minimizes a sliced characteristic-function discrepancy
+Let `P` be the learned latent distribution and `Q` be a target distribution. AtlasReg measures how different they are by:
 
-$$
-\mathcal{D}_w(P,Q)
-=
-\int_{\mathbb{S}^{d-1}}\int_{\mathbb{R}}
-w(t)\left|\varphi_P(tu)-\varphi_Q(tu)\right|^2
-\,dt\,d\sigma(u).
-$$
+1. projecting both distributions onto many one-dimensional directions;
+2. comparing their characteristic functions across a range of frequencies;
+3. weighting and averaging the squared differences.
 
-For an integrable weight satisfying `w(t) > 0` almost everywhere, the population objective is non-negative and equals zero exactly when `P = Q`. Training replaces the population distribution, sphere integral, and frequency integral with a minibatch estimator, a structured direction rule, and numerical quadrature or a Gaussian closed form.
+In plain terms, AtlasReg asks whether the learned latent points have the same location, scale, shape, and tail behaviour as the selected target when viewed from many directions.
 
-The default projection rule is a Haar-rotated cross-polytope. Its full `2d` vertices form a spherical 3-design. For symmetric target characteristic functions, antipodal directions produce identical squared discrepancies, so AtlasReg evaluates `d` distinct projection lines without altering the objective. At `d = 192`, this gives 192 structured projection evaluations per step.
+The population discrepancy can be written in ASCII form as:
+
+```text
+D_w(P, Q) = average over all unit directions u and all frequencies t of:
+            weight(t) * |CF_P(t * u) - CF_Q(t * u)|^2
+```
+
+Here:
+
+- `CF_P` is the characteristic function of the learned latent distribution;
+- `CF_Q` is the characteristic function of the target distribution;
+- `u` is a unit direction;
+- `t` is a frequency;
+- `weight(t)` controls which frequency ranges matter most.
+
+When the frequency weight is positive almost everywhere and integrable, the population discrepancy is non-negative and equals zero exactly when `P` and `Q` are the same distribution.
+
+Training uses a finite minibatch, a finite set of projection directions, and either numerical frequency quadrature or an exact Gaussian closed form.
+
+The default projection rule is a Haar-rotated cross-polytope. Its full `2 * d` vertices form a spherical 3-design. For symmetric target characteristic functions, opposite directions produce identical squared discrepancies, so AtlasReg evaluates `d` distinct projection lines without changing the loss. At latent dimension `d = 192`, this gives 192 structured projection evaluations per step.
 
 ## Architecture
 
@@ -57,27 +72,20 @@ flowchart LR
     E2 --> CEM
 ```
 
-The training objective is
+The training objective is:
 
-$$
-\mathcal{L}
-=
-\mathcal{L}_{\mathrm{pred}}
-+
-\lambda_{\mathrm{reg}}\mathcal{L}_{\mathrm{AtlasReg}},
-$$
+```text
+total loss = prediction loss + regularization weight * AtlasReg loss
+```
 
-with
+The prediction term is:
 
-$$
-\mathcal{L}_{\mathrm{pred}}
-=
-\frac{1}{B(T-1)}
-\sum_{b,t}
-\left\|\widehat z_{b,t+1}-z_{b,t+1}\right\|_2^2.
-$$
+```text
+prediction loss = mean squared distance between:
+                  predicted next latent and encoded next latent
+```
 
-Action `a_t` conditions latent `z_t` when predicting `z_{t+1}` in both teacher-forced training and autoregressive planning.
+For every transition, action `a_t` conditions latent `z_t` when predicting `z_(t+1)`. The same alignment is used in teacher-forced training and autoregressive planning.
 
 ## Statistical specification
 
@@ -103,7 +111,7 @@ Action `a_t` conditions latent `z_t` when predicting `z_{t+1}` in both teacher-f
 | A Haar-rotated orthonormal basis is unbiased for spherical averages | Exact in rotation expectation |
 | Antipodal projection pairs are redundant for symmetric-target squared CF loss | Exact |
 | The biased Gaussian estimator has a known finite-sample null floor | Exact |
-| The Gaussian-weighted objective admits a closed BHEP form | Exact |
+| The Gaussian-weighted objective has a closed BHEP form | Exact |
 | A finite set of directions and frequencies identifies every distribution | Not asserted |
 | Global optimization avoids every collapsed stationary point | Not asserted |
 | AtlasWM outperforms external world-model baselines on every environment | Not asserted |
@@ -237,7 +245,7 @@ AtlasRegConfig(
 )
 ```
 
-This backend integrates all frequencies analytically and costs `O(MN^2)`.
+This backend integrates all frequencies analytically and costs `O(M * N^2)`.
 
 ### Multivariate BHEP and Henze-Zirkler mode
 
@@ -266,11 +274,57 @@ config = AtlasRegConfig(
 )
 ```
 
-For `nu > 2`, the scale factor is
+For `nu > 2`, the scale factor is:
 
-$$
-s=\sqrt{\frac{\nu-2}{\nu}}.
-$$
+```text
+scale = square root of ((nu - 2) / nu)
+```
+
+A scale-one Student-t distribution has variance `nu / (nu - 2)`. Applying the scale above gives unit variance.
+
+## How the estimators behave
+
+### Biased estimator
+
+The default estimator is always non-negative. On a finite batch drawn exactly from the target distribution, its expected value is still slightly above zero because the empirical batch is not the complete population.
+
+For a Gaussian target, the expected finite-sample floor is:
+
+```text
+null floor = (1 / N) * (1 - (1 + 2 * beta^2)^(-k / 2))
+```
+
+Here:
+
+- `N` is the number of samples;
+- `k` is the evaluated dimension;
+- `beta` is the Gaussian-kernel bandwidth.
+
+### Unbiased estimator
+
+The unbiased U-statistic removes the expected finite-sample floor. It has the correct population expectation, but an individual minibatch estimate can be negative.
+
+### Raw matching and shape testing
+
+Raw target matching preserves information about latent mean, variance, covariance, and shape.
+
+Studentized one-dimensional testing removes location and scale separately for every projected minibatch. It tests shape but does not force the full latent covariance to equal the identity matrix.
+
+Whitened k-dimensional testing removes location and covariance inside each sampled subspace. Full-dimensional whitening gives the classical affine-invariant normality-testing setting.
+
+## Structured projection rule
+
+The cross-polytope uses the coordinate directions and their opposites before rotation:
+
+```text
++e_1, -e_1, +e_2, -e_2, ..., +e_d, -e_d
+```
+
+Its complete set is exact for spherical polynomials of degree 3 or lower. The characteristic-function objective is not a degree-3 polynomial, so the design is a structured finite approximation rather than exact integration of the full loss.
+
+A fresh Haar rotation gives every basis direction a uniform marginal distribution on the sphere. Averaging across rotations gives an unbiased estimate of the spherical average for any integrable directional loss.
+
+For symmetric targets, the loss for direction `u` equals the loss for direction `-u`. Evaluating one direction from each opposite pair therefore halves the projection work without changing the averaged loss.
 
 ## Verification and reproducibility
 
@@ -283,12 +337,7 @@ pytest
 Reproduce the principal statistical identities:
 
 ```bash
-python scripts/reproduce_statistics.py \
-  --seed 42 \
-  --dim 8 \
-  --samples 128 \
-  --trials 128 \
-  --output outputs/statistical_verification.json
+python scripts/reproduce_statistics.py --seed 42 --dim 8 --samples 128 --trials 128 --output outputs/statistical_verification.json
 ```
 
 Run the regularizer benchmark:
@@ -308,26 +357,26 @@ The repository defines an evidence protocol for control experiments, latent diag
 
 ```text
 AtlasWM/
-├── atlaswm/
-│   ├── designs.py             # Spherical designs and Haar rotations
-│   ├── statistics.py          # ECF, BHEP, HZ, null-floor, moment identities
-│   ├── targets.py             # Gaussian and Student-t characteristic functions
-│   ├── kernels.py             # Frequency quadrature and Gaussian weights
-│   ├── regularizer.py         # AtlasReg objective
-│   ├── encoder.py             # Vision transformer encoder
-│   ├── predictor.py           # Causal action-conditioned predictor
-│   ├── model.py               # End-to-end world-model objective
-│   ├── planning/              # Latent CEM planner
-│   └── data.py                # Synthetic trajectory environment
-├── configs/                   # Reproducible experiment configurations
-├── docs/
-│   ├── theory.md              # Mathematical foundations
-│   └── benchmark_protocol.md  # Fixed-budget empirical protocol
-├── paper/                     # Technical manuscript and bibliography
-├── scripts/                   # Training, benchmarking, verification
-├── tests/                     # Unit, mathematical, and integration tests
-├── MODEL_CARD.md
-└── REPRODUCIBILITY.md
+|-- atlaswm/
+|   |-- designs.py             # Spherical designs and Haar rotations
+|   |-- statistics.py          # ECF, BHEP, HZ, null-floor, moment identities
+|   |-- targets.py             # Gaussian and Student-t characteristic functions
+|   |-- kernels.py             # Frequency quadrature and Gaussian weights
+|   |-- regularizer.py         # AtlasReg objective
+|   |-- encoder.py             # Vision transformer encoder
+|   |-- predictor.py           # Causal action-conditioned predictor
+|   |-- model.py               # End-to-end world-model objective
+|   |-- planning/              # Latent CEM planner
+|   `-- data.py                # Synthetic and NPZ trajectory datasets
+|-- configs/                   # Reproducible experiment configurations
+|-- docs/
+|   |-- theory.md              # Mathematical foundations
+|   `-- benchmark_protocol.md  # Fixed-budget empirical protocol
+|-- paper/                     # Technical manuscript and bibliography
+|-- scripts/                   # Training, benchmarking, verification
+|-- tests/                     # Unit, mathematical, and integration tests
+|-- MODEL_CARD.md
+`-- REPRODUCIBILITY.md
 ```
 
 ## Citation
