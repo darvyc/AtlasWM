@@ -1,6 +1,6 @@
-"""AtlasWM: JEPA world models with structured distribution matching."""
+"""AtlasWM: structured characteristic-function regularization for JEPA world models."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 from atlaswm.encoder import ViTEncoder
 from atlaswm.model import AtlasWM
