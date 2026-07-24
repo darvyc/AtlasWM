@@ -1,12 +1,11 @@
-"""Benchmark AtlasReg against its SIGReg-equivalent configuration.
+"""Benchmark the principal AtlasReg estimator configurations.
 
-Compares forward-pass time and gradient-flow correctness for:
-  - Baseline: Haar sampling, 1024 projections, single-scale kernel (~ SIGReg)
-  - Atlas:   cross-polytope + rotation, two-scale kernel (defaults)
-  - Atlas-HZ: subspace_dim=4, Henze-Zirkler closed form
+This script measures forward plus backward time. It does not measure control
+quality or establish a statistical-power advantage.
 """
 
 from __future__ import annotations
+
 import argparse
 import sys
 import time
@@ -26,59 +25,56 @@ def benchmark(
     batch_size: int,
     n_iters: int,
     device: torch.device,
-):
+) -> None:
     reg = AtlasReg(dim, cfg).to(device)
     z = torch.randn(batch_size, dim, device=device, requires_grad=True)
 
-    # Warm up
     for _ in range(5):
-        loss = reg(z)
-        loss.backward()
+        reg(z).backward()
         z.grad = None
 
     if device.type == "cuda":
         torch.cuda.synchronize()
-
-    t0 = time.perf_counter()
+    start = time.perf_counter()
     for _ in range(n_iters):
         loss = reg(z)
         loss.backward()
         z.grad = None
     if device.type == "cuda":
         torch.cuda.synchronize()
-    t1 = time.perf_counter()
+    elapsed = time.perf_counter() - start
 
-    per_iter_ms = (t1 - t0) / n_iters * 1000
-    print(f"{name:<30s}  {per_iter_ms:7.2f} ms/iter   final loss={loss.item():.4f}")
+    milliseconds = elapsed / n_iters * 1000.0
+    print(f"{name:<42s} {milliseconds:8.2f} ms/iter  loss={loss.item():.6f}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dim", type=int, default=192)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--n-iters", type=int, default=100)
-    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(args.device)
-
+    device = (
+        torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if args.device == "auto"
+        else torch.device(args.device)
+    )
     print(
         f"Benchmark: dim={args.dim}, batch={args.batch_size}, "
         f"iters={args.n_iters}, device={device}"
     )
-    print("-" * 70)
+    print("-" * 90)
 
-    # SIGReg-equivalent baseline
     benchmark(
-        "SIGReg-equivalent (Haar, 1D, single-scale)",
+        "Haar 1D quadrature, 1024 directions",
         AtlasRegConfig(
             design="haar",
             n_haar_projections=1024,
             rotate=False,
             subspace_dim=1,
+            standardize_1d=False,
             kernel="single",
             lambda_=1.0,
         ),
@@ -87,14 +83,14 @@ def main():
         args.n_iters,
         device,
     )
-
-    # AtlasReg default
     benchmark(
-        "AtlasReg (cross-polytope, two-scale)",
+        "Rotated basis 1D two-scale quadrature",
         AtlasRegConfig(
             design="cross_polytope",
             rotate=True,
+            deduplicate_antipodes=True,
             subspace_dim=1,
+            standardize_1d=False,
             kernel="two_scale",
         ),
         args.dim,
@@ -102,11 +98,27 @@ def main():
         args.n_iters,
         device,
     )
-
-    # AtlasReg k-D (Henze-Zirkler)
     benchmark(
-        "AtlasReg k=4 (Henze-Zirkler)",
-        AtlasRegConfig(subspace_dim=4, hz_beta=1.0),
+        "Random 4D subspace, raw fixed-beta BHEP",
+        AtlasRegConfig(
+            subspace_dim=4,
+            n_subspaces=1,
+            whiten_kd=False,
+            hz_beta=1.0,
+        ),
+        args.dim,
+        args.batch_size,
+        args.n_iters,
+        device,
+    )
+    benchmark(
+        "Random 4D subspace, HZ-style shape test",
+        AtlasRegConfig(
+            subspace_dim=4,
+            n_subspaces=1,
+            whiten_kd=True,
+            hz_beta=None,
+        ),
         args.dim,
         args.batch_size,
         args.n_iters,
