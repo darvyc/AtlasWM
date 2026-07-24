@@ -17,10 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - explicit raw-target, studentized, and whitened matching modes;
 - multiple k-dimensional subspace evaluation;
 - action-aligned autoregressive latent rollout;
+- validated generic NPZ trajectory dataset interface;
+- deterministic dataset fingerprints and provenance-rich atomic checkpoints;
 - statistical verification script with machine-readable output;
 - technical manuscript, model card, reproducibility standard, and benchmark protocol;
 - Python 3.10, 3.11, and 3.12 continuous integration;
-- source and wheel package build verification.
+- source and wheel package build verification;
+- security policy, dependency update policy, and release-oriented contribution standard.
 
 ### Mathematical specification
 
@@ -37,8 +40,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Public package version set to `1.0.0`.
 - Package metadata, citation metadata, documentation links, and research classifiers completed.
 - The `atlaswm-train` command provides the installed training entry point.
+- Toy and NPZ trajectory datasets share the same training interface.
+- Checkpoints record model and optimizer state, resolved configuration, loss history, random-number-generator state, package version, Git commit, and dataset fingerprint.
 - CEM rollout conditions each predicted transition on the corresponding action.
 - AdaLN action modulation retains zero initialization.
+- The quickstart uses a held-out linear probe and labels it as an integration diagnostic.
 
 ## [0.1.0] - 2026-04-22
 
