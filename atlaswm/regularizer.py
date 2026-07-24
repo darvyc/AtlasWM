@@ -4,7 +4,7 @@ AtlasReg approximates a sliced characteristic-function discrepancy between the
 latent distribution and a chosen target. The implementation deliberately
 separates:
 
-* target matching from affine-invariant shape testing;
+* target matching from batch-standardized shape testing;
 * biased non-negative empirical discrepancies from unbiased U-statistics;
 * exact Gaussian closed forms from finite-frequency quadrature;
 * deterministic cubature properties from stochastic random rotations.
@@ -12,8 +12,8 @@ separates:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 import torch
@@ -42,8 +42,8 @@ class AtlasRegConfig:
 
     Defaults perform genuine matching to N(0, I): projections are not
     studentized and k-dimensional subspaces are not whitened. Set
-    ``standardize_1d=True`` or ``whiten_kd=True`` only when an affine-invariant
-    shape test is intended.
+    ``standardize_1d=True`` for per-projection location-scale-invariant shape
+    testing, or ``whiten_kd=True`` for covariance-standardized subspace tests.
     """
 
     design: DesignName = "cross_polytope"
