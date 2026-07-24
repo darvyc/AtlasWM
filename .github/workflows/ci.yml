@@ -29,7 +29,7 @@ jobs:
       - run: pytest --cov=atlaswm --cov-report=term-missing --cov-fail-under=75
       - run: python -m build
       - run: python scripts/reproduce_statistics.py --dim 4 --samples 32 --trials 16 --output outputs/statistical_verification.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verification-artifacts
