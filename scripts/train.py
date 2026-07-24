@@ -1,7 +1,5 @@
-"""Source-tree wrapper for the installed AtlasWM CLI."""
-
-from atlaswm.cli import main
+from atlaswm.cli import train_main
 
 
 if __name__ == "__main__":
-    main()
+    train_main()

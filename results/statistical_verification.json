@@ -1,0 +1,10 @@
+{
+  "biased_monte_carlo_mean": 0.0055197677575051785,
+  "cross_polytope_fourth_moment": 1096.5,
+  "cross_polytope_second_moment_max_error": 0.0,
+  "gaussian_null_floor": 0.005208333333333334,
+  "seed": 42,
+  "spherical_fourth_moment": 1560.6000000000001,
+  "student_t_nu5_unit_variance_scale": 0.7745966692414834,
+  "unbiased_monte_carlo_mean": 0.0002798200584948063
+}

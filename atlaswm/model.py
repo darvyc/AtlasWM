@@ -1,8 +1,6 @@
-"""End-to-end joint-embedding predictive world model."""
+"""End-to-end AtlasWM model."""
 
 from __future__ import annotations
-
-from typing import Optional
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,18 +12,6 @@ from atlaswm.regularizer import AtlasReg, AtlasRegConfig
 
 
 class AtlasWM(nn.Module):
-    """Compose the image encoder, action-conditioned predictor, and AtlasReg.
-
-    The objective is
-
-        L = L_pred + lambda_reg * L_reg.
-
-    Because both branches of ``L_pred`` are trainable, a constant encoder and
-    constant predictor are a zero-prediction-loss solution. AtlasReg is the
-    component that makes that collapsed empirical distribution disagree with a
-    non-degenerate target.
-    """
-
     def __init__(
         self,
         img_size: int = 224,
@@ -38,11 +24,17 @@ class AtlasWM(nn.Module):
         predictor_depth: int = 6,
         predictor_heads: int = 16,
         predictor_dropout: float = 0.1,
-        reg_config: Optional[AtlasRegConfig] = None,
+        reg_config: AtlasRegConfig | None = None,
+        regularizer: nn.Module | None = None,
+        detach_prediction_target: bool = False,
     ):
         super().__init__()
+        if regularizer is not None and reg_config is not None:
+            raise ValueError("provide either regularizer or reg_config, not both")
         self.embed_dim = embed_dim
         self.action_dim = action_dim
+        self.history_length = history_length
+        self.detach_prediction_target = detach_prediction_target
         self.encoder = ViTEncoder(
             img_size=img_size,
             patch_size=patch_size,
@@ -58,41 +50,50 @@ class AtlasWM(nn.Module):
             n_heads=predictor_heads,
             dropout=predictor_dropout,
         )
-        self.regularizer = AtlasReg(embed_dim, reg_config)
+        self.regularizer = regularizer or AtlasReg(embed_dim, reg_config)
 
-    def encode(self, obs: Tensor) -> Tensor:
-        """Encode observations shaped (B,C,H,W) or (B,T,C,H,W)."""
-        return self.encoder(obs)
+    def encode(self, observations: Tensor) -> Tensor:
+        return self.encoder(observations)
 
-    def predict(self, z: Tensor, actions: Tensor) -> Tensor:
-        """Predict the next latent at each teacher-forced position."""
-        return self.predictor(z, actions)
+    def predict(self, latent: Tensor, actions: Tensor) -> Tensor:
+        return self.predictor(latent, actions)
 
     def training_step(
         self,
-        obs: Tensor,
+        observations: Tensor,
         actions: Tensor,
         lambda_reg: float = 0.1,
     ) -> dict[str, Tensor]:
-        """Compute prediction, regularization, and total losses."""
-        if obs.dim() != 5:
-            raise ValueError("obs must have shape (B, T, C, H, W)")
-        if actions.dim() != 3:
-            raise ValueError("actions must have shape (B, T, A)")
-        if obs.shape[:2] != actions.shape[:2]:
-            raise ValueError("obs and actions must share batch and time dimensions")
+        if observations.ndim != 5:
+            raise ValueError("observations must have shape (B,T,C,H,W)")
+        if actions.ndim != 3:
+            raise ValueError("actions must have shape (B,T,A)")
+        if observations.shape[:2] != actions.shape[:2]:
+            raise ValueError("observations and actions must share batch/time dimensions")
         if actions.shape[-1] != self.action_dim:
-            raise ValueError(
-                f"expected action dim {self.action_dim}, got {actions.shape[-1]}"
-            )
-        if obs.shape[1] < 2:
+            raise ValueError("action dimension mismatch")
+        if observations.shape[1] < 2:
             raise ValueError("training trajectories require at least two frames")
+        if observations.shape[1] > self.history_length:
+            raise ValueError(
+                f"trajectory length {observations.shape[1]} exceeds history_length {self.history_length}"
+            )
         if lambda_reg < 0:
             raise ValueError("lambda_reg must be non-negative")
 
-        z = self.encoder(obs)
-        z_next_pred = self.predictor(z, actions)
-        pred_loss = F.mse_loss(z_next_pred[:, :-1], z[:, 1:])
-        reg_loss = self.regularizer(z)
-        total = pred_loss + lambda_reg * reg_loss
-        return {"total": total, "pred": pred_loss, "reg": reg_loss}
+        latent = self.encoder(observations)
+        predicted = self.predictor(latent, actions)
+        target = latent[:, 1:]
+        if self.detach_prediction_target:
+            target = target.detach()
+        prediction_loss = F.mse_loss(predicted[:, :-1], target)
+        regularizer_loss = self.regularizer(latent)
+        total = prediction_loss + lambda_reg * regularizer_loss
+        return {
+            "total": total,
+            "pred": prediction_loss,
+            "reg": regularizer_loss,
+        }
+
+    def parameter_count(self) -> int:
+        return sum(parameter.numel() for parameter in self.parameters())

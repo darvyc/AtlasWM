@@ -1,16 +1,15 @@
-# Classical Henze-Zirkler-style normal-shape configuration on random 4D
-# subspaces. Whitening removes location and covariance within each subspace.
-
 seed: 42
 
 data:
   name: toy
-  n_trajectories: 200
-  traj_length: 64
+  n_trajectories: 96
+  traj_length: 48
   sub_length: 8
   img_size: 64
-  batch_size: 32
-  num_workers: 0
+  action_noise: 0.02
+  split:
+    train: 0.8
+    validation: 0.1
 
 model:
   img_size: 64
@@ -23,26 +22,61 @@ model:
   predictor_depth: 4
   predictor_heads: 8
   predictor_dropout: 0.1
+  detach_prediction_target: false
 
 regularizer:
-  design: cross_polytope       # unused by the k-D path
-  rotate: true                 # unused by the k-D path
+  name: atlas
+  design: cross_polytope
+  rotation_mode: haar
+  rotation_refresh_steps: 16
+  resample_during_eval: false
+  deduplicate_antipodes: true
   subspace_dim: 4
   n_subspaces: 4
   target: gaussian
+  standardize_1d: false
   whiten_kd: true
   estimator: biased
-  hz_beta: null                # classical sample-size-dependent HZ bandwidth
+  one_d_backend: quadrature
+  hz_beta: null
+  kernel: two_scale
+  lambda_1: 0.5
+  lambda_2: 2.0
+  alpha: 0.5
+  n_knots: 33
+  projection_chunk_size: 192
+  frequency_chunk_size: 8
+  pair_chunk_size: 256
 
 trainer:
   epochs: 10
-  lr: 3.0e-4
+  batch_size: 32
+  num_workers: 0
+  lr: 0.0003
   weight_decay: 0.01
-  lambda_reg: 1.0
+  lambda_reg: 0.1
   grad_clip: 1.0
+  warmup_steps: 100
+  amp: true
+  deterministic: false
   log_every: 50
+  validate_every: 1
+  checkpoint_every: 1
   device: auto
 
 output:
   dir: outputs/hz_4d
-  save_every: 1
+
+evaluation:
+  probe_max_batches: 50
+  toy_control:
+    enabled: true
+    episodes: 20
+    max_steps: 40
+    horizon: 5
+    n_samples: 256
+    n_iters: 6
+    n_elites: 32
+    action_low: -2.0
+    action_high: 2.0
+    smoothness_penalty: 0.001
