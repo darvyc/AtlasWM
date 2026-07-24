@@ -26,7 +26,7 @@ See [`docs/theory.md`](docs/theory.md) for the complete derivations and guarante
 | Statistical target | Isotropic Gaussian or scaled Student-t in the 1D path |
 | Estimator | Biased non-negative empirical discrepancy or unbiased U-statistic |
 | Frequency integration | Fast quadrature or exact Gaussian closed form |
-| Matching mode | Raw target matching or affine-invariant shape testing |
+| Matching mode | Raw target matching or batch-standardized shape testing |
 | Subspace dimension | 1D projected ECF or k-D BHEP/Henze-Zirkler discrepancy |
 
 At latent dimension `d=192`, the symmetric-target cross-polytope path uses `192` distinct antipodal lines. The full `384`-vertex cross-polytope remains the spherical 3-design, but opposite vertices give exactly the same squared CF loss.
@@ -98,7 +98,7 @@ AtlasRegConfig(
 
 This is the default.
 
-### Affine-invariant shape testing
+### Studentized projection shape testing
 
 Projection studentization deliberately removes location and scale:
 
@@ -149,7 +149,7 @@ AtlasRegConfig(
 )
 ```
 
-Set `whiten_kd=True` for affine-invariant normal-shape testing. Set `hz_beta=None` to use the classical sample-size-dependent Henze-Zirkler bandwidth.
+Set `whiten_kd=True` for covariance-standardized normal-shape testing within each sampled subspace. Set `hz_beta=None` to use the classical sample-size-dependent Henze-Zirkler bandwidth.
 
 ### Student-t target
 
