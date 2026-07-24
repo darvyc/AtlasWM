@@ -14,9 +14,9 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
+from atlaswm.data import ToyTrajectoryDataset
 from atlaswm.model import AtlasWM
 from atlaswm.regularizer import AtlasRegConfig
-from atlaswm.data import ToyTrajectoryDataset
 from atlaswm.train import TrainState, train_one_epoch
 
 
