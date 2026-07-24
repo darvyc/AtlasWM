@@ -1,85 +1,119 @@
-# Quickstart
+# AtlasWM Quickstart
 
 ## Install
 
 ```bash
-git clone https://github.com/darvyc/atlaswm.git
-cd atlaswm
+git clone https://github.com/darvyc/AtlasWM.git
+cd AtlasWM
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-## Run the smoke test
+## Verify the installation
+
+```bash
+python -m compileall atlaswm scripts
+pytest
+python scripts/reproduce_statistics.py \
+  --seed 42 \
+  --dim 4 \
+  --samples 32 \
+  --trials 16
+```
+
+## Run the end-to-end example
 
 ```bash
 python examples/quickstart.py
 ```
 
-This trains a tiny AtlasWM on a built-in 2D toy environment for two epochs, then probes the latent space to show that the encoder recovered the agent's 2D position — confirming the full pipeline (encoder + predictor + regularizer) is working end-to-end.
+The example generates visual trajectories from the included two-dimensional environment, trains a compact AtlasWM instance, and evaluates a linear probe on the latent representation. Treat the printed metrics as an integration demonstration rather than a benchmark result.
 
-Expected output on a CPU in under a minute:
+## Train with the default configuration
 
-```
-AtlasWM parameters: ~900,000
-Generating toy dataset...
-Training for 2 epochs on toy data...
-[step     20] total=0.7234  pred=0.6102  reg=1.1320
-[step     40] total=0.3891  ...
-...
-Probing latent space for agent position...
-Linear probe R^2 for agent position: 0.94
+```bash
+atlaswm-train --config configs/default.yaml
 ```
 
-## Train on your own data
-
-Drop in any `torch.utils.data.Dataset` that yields `(obs, actions, ...)` per item, where:
-
-- `obs`: `(T, C, H, W)` float tensor, roughly in `[-1, 1]`
-- `actions`: `(T, action_dim)` float tensor
-
-Then:
+The equivalent source-tree command is:
 
 ```bash
 python scripts/train.py --config configs/default.yaml
 ```
 
-## Override config from the CLI
+## Dataset interface
 
-Any dotted key can be overridden:
+A dataset item must provide at least `(observations, actions)`:
+
+```text
+observations: (time, channels, height, width) float tensor
+actions:      (time, action_dim) float tensor
+```
+
+Additional values, such as state labels or metadata, may follow. The training loop consumes the first two elements.
+
+The observation range depends on the encoder preprocessing. The included synthetic dataset uses values in `[-1, 1]`.
+
+## Command-line overrides
+
+Configuration leaves can be replaced with dotted keys.
+
+### Multivariate Gaussian subspace objective
 
 ```bash
-# Test the multivariate Henze-Zirkler variant
-python scripts/train.py --config configs/default.yaml \
-    regularizer.subspace_dim=4 \
-    trainer.lambda_reg=1.0
-
-# Switch to Student-t target with ν=5
-python scripts/train.py --config configs/default.yaml \
-    regularizer.target=student_t \
-    regularizer.student_t_nu=5.0
-
-# Ablate back to SIGReg-equivalent
-python scripts/train.py --config configs/default.yaml \
-    regularizer.design=haar \
-    regularizer.n_haar_projections=1024 \
-    regularizer.kernel=single \
-    regularizer.rotate=false
+atlaswm-train \
+  --config configs/default.yaml \
+  regularizer.subspace_dim=4 \
+  regularizer.n_subspaces=4 \
+  regularizer.whiten_kd=true \
+  regularizer.hz_beta=null
 ```
 
-## Benchmark the regularizer
+### Unit-variance Student-t target
 
-Compare per-iteration cost of different regularizer configurations:
+For `nu = 5`, the unit-variance scale is `sqrt(3/5)`.
 
 ```bash
-python scripts/bench.py --dim 192 --batch-size 512 --n-iters 200
+atlaswm-train \
+  --config configs/default.yaml \
+  regularizer.target=student_t \
+  regularizer.student_t_nu=5.0 \
+  regularizer.student_t_scale=0.7745966692
 ```
 
-Typical output on a modern GPU:
+### iid Haar projection baseline
 
+```bash
+atlaswm-train \
+  --config configs/default.yaml \
+  regularizer.design=haar \
+  regularizer.n_haar_projections=1024 \
+  regularizer.kernel=single \
+  regularizer.rotate=false
 ```
-SIGReg-equivalent (Haar, 1D, single-scale)    3.21 ms/iter
-AtlasReg (cross-polytope, two-scale)          1.20 ms/iter    <- ~2.7x faster
-AtlasReg k=4 (Henze-Zirkler)                  1.85 ms/iter
+
+### Exact Gaussian closed form
+
+```bash
+atlaswm-train \
+  --config configs/default.yaml \
+  regularizer.target=gaussian \
+  regularizer.one_d_backend=closed_form \
+  regularizer.kernel=single \
+  regularizer.lambda_=1.0
 ```
+
+## Benchmark regularizer cost
+
+```bash
+python scripts/bench.py \
+  --dim 192 \
+  --batch-size 512 \
+  --n-iters 200 \
+  --device auto
+```
+
+Benchmark values depend on hardware, PyTorch version, precision, batch size, and synchronization policy. Report the full environment and use matched settings for every method.
 
 ## Plan with a trained model
 
@@ -95,12 +129,19 @@ planner = CEMPlanner(
     action_low=-1.0,
     action_high=1.0,
 )
-actions = planner.plan(current_obs, goal_obs)
-# actions: (horizon, action_dim) — execute actions[0] in the env, then replan.
+
+actions = planner.plan(current_observation, goal_observation)
+first_action = actions[0]
 ```
 
-## Test
+For receding-horizon control, execute the first action, acquire a fresh observation, and plan again. Add environment-specific safety and feasibility constraints before physical deployment.
 
-```bash
-pytest tests/ -v
-```
+## Reproducible experiment records
+
+Follow:
+
+- [`REPRODUCIBILITY.md`](../REPRODUCIBILITY.md)
+- [`benchmark_protocol.md`](benchmark_protocol.md)
+- [`MODEL_CARD.md`](../MODEL_CARD.md)
+
+Every reported result should identify the Git commit, configuration, dataset fingerprint, hardware, seed, and raw per-seed metrics.
