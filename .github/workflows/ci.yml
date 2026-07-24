@@ -43,7 +43,19 @@ jobs:
         run: python -m compileall atlaswm scripts
 
       - name: Run test suite
-        run: pytest --cov=atlaswm --cov-report=term-missing
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest --cov=atlaswm --cov-report=term-missing 2>&1 | tee pytest-${{ matrix.python-version }}.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-python-${{ matrix.python-version }}
+          path: pytest-${{ matrix.python-version }}.log
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Run statistical verification artifact
         if: matrix.python-version == '3.12'
@@ -54,6 +66,15 @@ jobs:
             --samples 32 \
             --trials 16 \
             --output outputs/statistical_verification.json
+
+      - name: Upload statistical verification
+        if: matrix.python-version == '3.12' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: statistical-verification
+          path: outputs/statistical_verification.json
+          if-no-files-found: error
+          retention-days: 14
 
   package:
     name: Build distribution
@@ -76,3 +97,11 @@ jobs:
 
       - name: Build source and wheel distributions
         run: python -m build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
