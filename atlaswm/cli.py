@@ -1,8 +1,8 @@
-"""Training CLI for AtlasWM.
+"""Training command-line interface for AtlasWM.
 
 Usage:
-    python scripts/train.py --config configs/default.yaml
-    python scripts/train.py --config configs/default.yaml regularizer.subspace_dim=4
+    atlaswm-train --config configs/default.yaml
+    atlaswm-train --config configs/default.yaml regularizer.subspace_dim=4
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import torch
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
-from atlaswm.data import ToyTrajectoryDataset
+from atlaswm.data import ToyTrajectoryDataset, TrajectoryNPZDataset
 from atlaswm.model import AtlasWM
 from atlaswm.regularizer import AtlasRegConfig
 from atlaswm.train import TrainState, train_one_epoch
@@ -45,26 +45,40 @@ def _deep_update(base: dict, override: dict) -> dict:
 
 
 def resolve_device(name: str) -> torch.device:
+    """Resolve ``auto`` or an explicit PyTorch device string."""
     if name == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(name)
 
 
-def build_dataset(cfg: dict):
+def build_dataset(cfg: dict) -> Dataset:
+    """Construct the dataset declared by a resolved configuration."""
     data = cfg["data"]
-    if data["name"] == "toy":
+    name = data["name"]
+    if name == "toy":
         return ToyTrajectoryDataset(
             n_trajectories=data["n_trajectories"],
             traj_length=data["traj_length"],
             sub_length=data["sub_length"],
             seed=cfg["seed"],
         )
-    raise NotImplementedError(
-        f"Dataset {data['name']!r} not included in the toy scaffold."
+    if name == "trajectory_npz":
+        return TrajectoryNPZDataset(
+            path=data["path"],
+            sub_length=data["sub_length"],
+            obs_key=data.get("obs_key", "obs"),
+            action_key=data.get("action_key", "actions"),
+            state_key=data.get("state_key"),
+            normalize_images=data.get("normalize_images", True),
+            channel_last=data.get("channel_last", False),
+        )
+    raise ValueError(
+        f"Unknown dataset {name!r}; expected 'toy' or 'trajectory_npz'"
     )
 
 
 def build_model(cfg: dict) -> AtlasWM:
+    """Construct AtlasWM from a resolved configuration dictionary."""
     model_cfg = cfg["model"]
     regularizer_cfg = cfg["regularizer"]
     reg_cfg = AtlasRegConfig(
