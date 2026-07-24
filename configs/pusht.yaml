@@ -1,12 +1,20 @@
-# Push-T-scale model configuration. The repository does not bundle the Push-T
-# dataset adapter or benchmark data; this file records model hyperparameters
-# for a future integration rather than constituting a reproduced result.
+# PushT-scale AtlasWM configuration for the generic trajectory NPZ interface.
+# Place data in data/pusht/trajectories.npz with arrays:
+#   obs:     (N, T, C, H, W) uint8 or float32
+#   actions: (N, T, 2) float32
+# Dataset provenance, preprocessing, splits, and evaluation follow the benchmark
+# protocol in docs/benchmark_protocol.md.
 
 seed: 42
 
 data:
   name: trajectory_npz
   path: data/pusht
+  obs_key: obs
+  action_key: actions
+  state_key: null
+  normalize_images: true
+  channel_last: false
   img_size: 224
   batch_size: 128
   num_workers: 4
@@ -26,18 +34,26 @@ model:
 
 regularizer:
   design: cross_polytope
+  n_haar_projections: 1024
   rotate: true
   deduplicate_antipodes: true
   subspace_dim: 1
+  n_subspaces: 1
   target: gaussian
+  student_t_nu: 5.0
+  student_t_scale: 1.0
   standardize_1d: false
+  whiten_kd: false
   estimator: biased
   one_d_backend: quadrature
   kernel: two_scale
+  lambda_: 1.0
   lambda_1: 0.5
   lambda_2: 2.0
   alpha: 0.5
   n_knots: 17
+  hz_beta: 1.0
+  eps: 1.0e-6
 
 trainer:
   epochs: 10

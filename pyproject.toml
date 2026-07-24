@@ -4,32 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlaswm"
-version = "0.1.0"
-description = "JEPA world models with structured characteristic-function distribution matching."
+version = "1.0.0"
+description = "Structured characteristic-function regularization for end-to-end JEPA world models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "Darvy C." },
+  { name = "Darvy Cana" },
 ]
 keywords = [
   "jepa",
   "world-model",
   "self-supervised-learning",
   "representation-learning",
+  "latent-dynamics",
+  "characteristic-functions",
   "spherical-designs",
   "cramer-wold",
-  "characteristic-functions",
+  "bhep",
+  "henze-zirkler",
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
   "torch>=2.0",
@@ -41,6 +46,7 @@ dependencies = [
 [project.optional-dependencies]
 student-t = ["scipy>=1.10"]
 dev = [
+  "build>=1.2",
   "pytest>=7.4",
   "pytest-cov>=4.1",
   "ruff>=0.3",
@@ -49,8 +55,11 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/darvyc/AtlasWM"
+Documentation = "https://github.com/darvyc/AtlasWM#readme"
 Repository = "https://github.com/darvyc/AtlasWM"
 Issues = "https://github.com/darvyc/AtlasWM/issues"
+Changelog = "https://github.com/darvyc/AtlasWM/blob/main/CHANGELOG.md"
+Manuscript = "https://github.com/darvyc/AtlasWM/blob/main/paper/atlaswm.md"
 
 [project.scripts]
 atlaswm-train = "atlaswm.cli:main"
@@ -61,7 +70,19 @@ packages = ["atlaswm", "atlaswm.planning"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-config --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["atlaswm"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
 
 [tool.ruff]
 line-length = 100
