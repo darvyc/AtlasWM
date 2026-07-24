@@ -1,21 +1,20 @@
-"""AtlasWM: stable end-to-end JEPA world models.
-
-Public API:
-    AtlasWM        — full end-to-end model
-    AtlasReg       — the anti-collapse regularizer
-    AtlasRegConfig — its configuration
-    ViTEncoder     — standalone encoder
-    Predictor      — standalone predictor
-    CEMPlanner     — latent-space planner
-"""
+"""AtlasWM: JEPA world models with structured distribution matching."""
 
 __version__ = "0.1.0"
 
-from atlaswm.model import AtlasWM
-from atlaswm.regularizer import AtlasReg, AtlasRegConfig
 from atlaswm.encoder import ViTEncoder
-from atlaswm.predictor import Predictor
+from atlaswm.model import AtlasWM
 from atlaswm.planning import CEMPlanner
+from atlaswm.predictor import Predictor
+from atlaswm.regularizer import AtlasReg, AtlasRegConfig
+from atlaswm.statistics import (
+    empirical_cf_discrepancy,
+    gaussian_bhep_discrepancy,
+    gaussian_bhep_null_floor,
+    henze_zirkler_beta,
+    spherical_projection_even_moment_coefficient,
+    student_t_unit_variance_scale,
+)
 
 __all__ = [
     "AtlasWM",
@@ -24,5 +23,11 @@ __all__ = [
     "ViTEncoder",
     "Predictor",
     "CEMPlanner",
+    "empirical_cf_discrepancy",
+    "gaussian_bhep_discrepancy",
+    "gaussian_bhep_null_floor",
+    "henze_zirkler_beta",
+    "spherical_projection_even_moment_coefficient",
+    "student_t_unit_variance_scale",
     "__version__",
 ]

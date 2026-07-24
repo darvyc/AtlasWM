@@ -1,19 +1,12 @@
-# Default AtlasWM training configuration.
+# Default AtlasWM research configuration.
 #
-# This config reproduces the LeWM-equivalent setup but with AtlasReg's
-# improvements on by default:
-#   - cross-polytope 3-design instead of 1024 Haar projections
-#   - two-scale kernel for joint body + tail sensitivity
-#   - random rotation per step (axis-alignment immunity)
-#
-# Override any field from the CLI, e.g.
-#   python scripts/train.py --config configs/default.yaml \
-#       regularizer.subspace_dim=4 trainer.lambda_reg=0.05
+# This uses raw-projection target matching. It constrains location, scale, and
+# distributional shape rather than studentising each projection.
 
 seed: 42
 
 data:
-  name: toy                 # 'toy' (built-in) or 'trajectory_npz'
+  name: toy
   n_trajectories: 200
   traj_length: 64
   sub_length: 8
@@ -34,19 +27,27 @@ model:
   predictor_dropout: 0.1
 
 regularizer:
-  design: cross_polytope    # {cross_polytope, simplex, haar}
-  n_haar_projections: 1024  # only used if design=haar
+  design: cross_polytope
+  n_haar_projections: 1024
   rotate: true
-  subspace_dim: 1           # 1 = Epps-Pulley, >1 = Henze-Zirkler
-  target: gaussian          # {gaussian, student_t}
+  deduplicate_antipodes: true
+  subspace_dim: 1
+  n_subspaces: 1
+  target: gaussian
   student_t_nu: 5.0
-  kernel: two_scale         # {single, two_scale}
+  student_t_scale: 1.0
+  standardize_1d: false
+  whiten_kd: false
+  estimator: biased
+  one_d_backend: quadrature
+  kernel: two_scale
   lambda_: 1.0
   lambda_1: 0.5
   lambda_2: 2.0
   alpha: 0.5
   n_knots: 17
   hz_beta: 1.0
+  eps: 1.0e-6
 
 trainer:
   epochs: 10
@@ -55,7 +56,7 @@ trainer:
   lambda_reg: 0.1
   grad_clip: 1.0
   log_every: 50
-  device: auto              # {auto, cpu, cuda}
+  device: auto
 
 output:
   dir: outputs/default
