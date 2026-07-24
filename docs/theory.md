@@ -272,7 +272,7 @@ The `2d` cross-polytope vertices therefore represent only `d` distinct projectio
 
 The full `2d` set remains the object that is a spherical 3-design. The `d`-direction computation is an exact quotient of an even loss on real projective space.
 
-## 9. Target matching versus shape testing
+## 9. Target matching versus batch-standardized shape testing
 
 There are two different objectives.
 
@@ -296,7 +296,7 @@ h_tilde = (h - batch_mean(h)) / batch_std(h).
 
 This removes location and scale information. The resulting objective tests whether each standardized projection has the target shape. It does not enforce latent mean zero, covariance identity, or any fixed embedding scale.
 
-AtlasReg defaults to target matching. `standardize_1d=True` and `whiten_kd=True` are explicit affine-invariant shape-test modes.
+AtlasReg defaults to target matching. `standardize_1d=True` gives per-projection location-scale-invariant shape testing. `whiten_kd=True` gives location- and covariance-standardized testing inside each sampled subspace. Neither statement by itself implies invariance to every invertible affine map of the ambient latent space when only a finite collection of proper subspaces is used; full-dimensional whitening is the classical affine-invariant case.
 
 ## 10. Collapse and the JEPA objective
 
@@ -401,7 +401,7 @@ AtlasRegConfig(
 )
 ```
 
-Affine-invariant Gaussian shape testing:
+Studentized one-dimensional Gaussian shape testing:
 
 ```python
 AtlasRegConfig(
@@ -450,5 +450,6 @@ AtlasRegConfig(
 - Delsarte, P., Goethals, J. M. and Seidel, J. J. (1977), *Spherical Codes and Designs*.
 - Murota, K. and Takeuchi, K. (1981), *The studentized empirical characteristic function and its application to test for the shape of distribution*.
 - Epps, T. W. and Pulley, L. B. (1983), *A test for normality based on the empirical characteristic function*.
+- Baringhaus, L. and Henze, N. (1988), *A consistent test for multivariate normality based on the empirical characteristic function*.
 - Henze, N. and Zirkler, B. (1990), *A class of invariant consistent tests for multivariate normality*.
 - Mezzadri, F. (2007), *How to generate random matrices from the classical compact groups*.
