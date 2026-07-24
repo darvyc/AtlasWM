@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Replaced claims of fully deterministic distribution matching with precise
   population, cubature, random-rotation, and finite-estimator statements.
-- Made raw target matching the default and exposed studentized/whitened shape
+- Made raw target matching the default and exposed batch-standardized shape
   testing explicitly.
 - Deduplicated antipodal projections for symmetric targets.
 - Corrected autoregressive action alignment during planning rollouts.
