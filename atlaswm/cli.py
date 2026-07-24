@@ -8,8 +8,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
+import json
+import random
+import subprocess
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
@@ -119,6 +126,94 @@ def build_model(cfg: dict) -> AtlasWM:
     )
 
 
+def _package_version() -> str:
+    try:
+        return importlib.metadata.version("atlaswm")
+    except importlib.metadata.PackageNotFoundError:
+        return "1.0.0"
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _dataset_fingerprint(dataset: Dataset, cfg: dict) -> dict[str, Any]:
+    if isinstance(dataset, TrajectoryNPZDataset):
+        return {
+            "kind": "trajectory_npz",
+            "path": str(dataset.archive_path),
+            "sha256": _sha256_file(dataset.archive_path),
+            "trajectories": int(dataset.obs.shape[0]),
+            "trajectory_length": int(dataset.obs.shape[1]),
+        }
+
+    serialized = json.dumps(
+        {"seed": cfg["seed"], "data": cfg["data"]},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "kind": "toy",
+        "sha256": hashlib.sha256(serialized).hexdigest(),
+        "trajectories": int(dataset.obs.shape[0]),
+        "trajectory_length": int(dataset.obs.shape[1]),
+    }
+
+
+def _rng_state() -> dict[str, Any]:
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch.get_rng_state(),
+        "torch_cuda": torch.cuda.get_rng_state_all()
+        if torch.cuda.is_available()
+        else None,
+    }
+
+
+def _save_checkpoint(
+    path: Path,
+    *,
+    model: AtlasWM,
+    optimizer: torch.optim.Optimizer,
+    cfg: dict,
+    state: TrainState,
+    dataset_fingerprint: dict[str, Any],
+) -> None:
+    payload = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "config": cfg,
+        "state": {"step": state.step, "epoch": state.epoch},
+        "loss_history": state.loss_history,
+        "rng_state": _rng_state(),
+        "atlaswm_version": _package_version(),
+        "git_commit": _git_commit(),
+        "dataset_fingerprint": dataset_fingerprint,
+    }
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, temporary_path)
+    temporary_path.replace(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train AtlasWM.")
     parser.add_argument("--config", required=True, help="Path to YAML config.")
@@ -130,17 +225,24 @@ def main() -> None:
     if args.overrides:
         _deep_update(cfg, _parse_overrides(args.overrides))
 
-    torch.manual_seed(cfg["seed"])
+    seed = int(cfg["seed"])
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     device = resolve_device(cfg["trainer"].get("device", "auto"))
     print(f"Device: {device}")
 
     dataset = build_dataset(cfg)
+    data_generator = torch.Generator().manual_seed(seed)
     loader = DataLoader(
         dataset,
         batch_size=cfg["data"]["batch_size"],
         shuffle=True,
         num_workers=cfg["data"].get("num_workers", 0),
         pin_memory=device.type == "cuda",
+        generator=data_generator,
     )
     model = build_model(cfg).to(device)
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -152,6 +254,7 @@ def main() -> None:
     )
     output_dir = Path(cfg["output"]["dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint = _dataset_fingerprint(dataset, cfg)
 
     state = TrainState()
     for epoch in range(cfg["trainer"]["epochs"]):
@@ -168,13 +271,12 @@ def main() -> None:
         )
         if (epoch + 1) % cfg["output"].get("save_every", 1) == 0:
             checkpoint = output_dir / f"ckpt_epoch{epoch + 1}.pt"
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "config": cfg,
-                    "state": {"step": state.step, "epoch": state.epoch},
-                },
+            _save_checkpoint(
                 checkpoint,
+                model=model,
+                optimizer=optimizer,
+                cfg=cfg,
+                state=state,
+                dataset_fingerprint=fingerprint,
             )
             print(f"Saved: {checkpoint}")
