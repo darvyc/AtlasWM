@@ -181,7 +181,7 @@ class TrajectoryNPZDataset(Dataset):
         obs_key: Observation array key.
         action_key: Action array key.
         state_key: Optional aligned state or label array key.
-        normalize_images: Map unsigned-byte observations to ``[-1, 1]``.
+        normalize_images: Map non-negative integer observations to ``[-1, 1]``.
         channel_last: Convert ``(..., H, W, C)`` observations to channels first.
     """
 
@@ -216,12 +216,13 @@ class TrajectoryNPZDataset(Dataset):
                     raise KeyError(f"state key {state_key!r} not found in {archive_path}")
                 states = np.asarray(archive[state_key])
 
+        single_trajectory = actions.ndim == 2
         if observations.ndim == 4:
             observations = observations[None, ...]
-        if actions.ndim == 2:
+        if single_trajectory:
             actions = actions[None, ...]
-        if states is not None and states.ndim >= 1 and states.shape[:1] == actions.shape[1:2]:
-            states = states[None, ...]
+            if states is not None:
+                states = states[None, ...]
 
         if observations.ndim != 5:
             raise ValueError(
@@ -253,7 +254,14 @@ class TrajectoryNPZDataset(Dataset):
             )
 
         if normalize_images and np.issubdtype(observations.dtype, np.integer):
-            observations = observations.astype(np.float32) / 127.5 - 1.0
+            dtype_info = np.iinfo(observations.dtype)
+            if dtype_info.min < 0:
+                raise ValueError(
+                    "integer image normalization requires a non-negative dtype"
+                )
+            observations = (
+                observations.astype(np.float32) / (dtype_info.max / 2.0) - 1.0
+            )
         else:
             observations = observations.astype(np.float32, copy=False)
         actions = actions.astype(np.float32, copy=False)
@@ -270,7 +278,9 @@ class TrajectoryNPZDataset(Dataset):
         windows_per_trajectory = self.obs.shape[1] - self.sub_length + 1
         return int(self.obs.shape[0] * windows_per_trajectory)
 
-    def __getitem__(self, index: int):
+    def __getitem__(
+        self, index: int
+    ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
         windows_per_trajectory = self.obs.shape[1] - self.sub_length + 1
         trajectory_index = index // windows_per_trajectory
         start = index % windows_per_trajectory
