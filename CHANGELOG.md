@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Research hardening
+
+- explicit shared, stop-gradient and EMA prediction-target modes;
+- frozen evaluation-mode EMA target encoder with configurable decay;
+- marginal, per-time, transition and combined regularization scopes;
+- nested regularization-weight selection on seeds disjoint from final evaluation;
+- random-orthogonal ECF baseline to isolate structured-direction effects;
+- Student-t confidence intervals and paired Hedges effect sizes;
+- wall-clock recording and raw selection artifacts;
+- regression tests for target gradients, EMA updates, temporal scopes and statistics.
+
 ## [2.0.0] - 2026-07-24
 
 ### Architecture
