@@ -22,7 +22,9 @@ model:
   predictor_depth: 4
   predictor_heads: 8
   predictor_dropout: 0.1
-  detach_prediction_target: false
+  target_mode: ema
+  ema_decay: 0.996
+  regularizer_scope: marginal
 
 regularizer:
   name: atlas
@@ -57,7 +59,7 @@ trainer:
   grad_clip: 1.0
   warmup_steps: 100
   amp: true
-  deterministic: false
+  deterministic: true
   log_every: 50
   validate_every: 1
   checkpoint_every: 1

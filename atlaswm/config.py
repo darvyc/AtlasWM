@@ -72,6 +72,22 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("model.img_size must be divisible by model.patch_size")
     if min(model["embed_dim"], model["action_dim"], model["history_length"]) < 1:
         raise ValueError("model dimensions must be positive")
+    target_mode = model.get(
+        "target_mode",
+        "stop_gradient" if model.get("detach_prediction_target") else "shared",
+    )
+    if target_mode not in {"shared", "stop_gradient", "ema"}:
+        raise ValueError("model.target_mode must be shared, stop_gradient or ema")
+    if model.get("detach_prediction_target", False) and target_mode == "ema":
+        raise ValueError("model.detach_prediction_target conflicts with model.target_mode=ema")
+    ema_decay = float(model.get("ema_decay", 0.996))
+    if not 0.0 <= ema_decay < 1.0:
+        raise ValueError("model.ema_decay must lie in [0,1)")
+    regularizer_scope = model.get("regularizer_scope", "marginal")
+    if regularizer_scope not in {"marginal", "per_time", "transition", "marginal_transition"}:
+        raise ValueError(
+            "model.regularizer_scope must be marginal, per_time, transition or marginal_transition"
+        )
     if trainer["epochs"] < 1 or trainer["batch_size"] < 1:
         raise ValueError("trainer.epochs and trainer.batch_size must be positive")
     if trainer["lambda_reg"] < 0:
@@ -124,6 +140,9 @@ def build_model(config: dict[str, Any]) -> AtlasWM:
         reg_config=reg_config,
         regularizer=regularizer,
         detach_prediction_target=model.get("detach_prediction_target", False),
+        target_mode=model.get("target_mode", "shared"),
+        ema_decay=float(model.get("ema_decay", 0.996)),
+        regularizer_scope=model.get("regularizer_scope", "marginal"),
     )
 
 
